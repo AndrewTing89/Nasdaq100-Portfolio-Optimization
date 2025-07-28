@@ -1,4 +1,4 @@
-# 🚀 Portfolio Optimization AWS Pipeline
+# 🚀 NASDAQ-100 Portfolio Optimization AWS Pipeline
 
 > **Live Demo:** [http://52.53.227.136:8501](http://52.53.227.136:8501) 📊
 
@@ -77,8 +77,8 @@ graph TB
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/portfolio-optimization-aws
-cd portfolio-optimization-aws
+git clone https://github.com/AndrewTing89/Nasdaq100-Portfolio-Optimization
+cd Nasdaq100-Portfolio-Optimization
 
 # Create S3 bucket
 aws s3 mb s3://your-portfolio-bucket
@@ -227,9 +227,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙋‍♂️ **Contact**
 
-**Your Name** - [your.email@domain.com](mailto:your.email@domain.com)
+**Andrew Ting** - [andrew.ting@example.com](mailto:andrew.ting@example.com)
 
-**Project Link:** [https://github.com/yourusername/portfolio-optimization-aws](https://github.com/yourusername/portfolio-optimization-aws)
+**Project Link:** [https://github.com/AndrewTing89/Nasdaq100-Portfolio-Optimization](https://github.com/AndrewTing89/Nasdaq100-Portfolio-Optimization)
 
 **Live Demo:** [http://52.53.227.136:8501](http://52.53.227.136:8501)
 
