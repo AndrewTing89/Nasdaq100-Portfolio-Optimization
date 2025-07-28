@@ -227,7 +227,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙋‍♂️ **Contact**
 
-**Andrew Ting** - [andrew.ting@example.com](mailto:andrew.ting@example.com)
+**Andrew Ting** - [LinkedIn](https://www.linkedin.com/in/andrewting89/)
 
 **Project Link:** [https://github.com/AndrewTing89/Nasdaq100-Portfolio-Optimization](https://github.com/AndrewTing89/Nasdaq100-Portfolio-Optimization)
 
