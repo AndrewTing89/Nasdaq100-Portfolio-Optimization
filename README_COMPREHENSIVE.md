@@ -5,7 +5,7 @@
 
 ## 🎯 Executive Summary
 
-This project transforms a local portfolio optimization system into a **fully automated, cloud-native AWS pipeline** that analyzes 50+ NASDAQ stocks and generates optimized investment portfolios using sophisticated financial models. Built with enterprise-grade serverless architecture, it demonstrates advanced cloud engineering, financial modeling, and full-stack development skills.
+This project transforms a local portfolio optimization system into a **fully automated, cloud-native AWS pipeline** that analyzes the complete NASDAQ-100 index and generates optimized investment portfolios using sophisticated financial models, comparing performance against the vanilla NASDAQ-100 to determine which optimization strategy delivers superior risk-adjusted returns. Built with enterprise-grade serverless architecture, it demonstrates advanced cloud engineering, financial modeling, and full-stack development skills.
 
 ### 🏆 Key Achievements
 - **100% Serverless Architecture** with automatic scaling and cost optimization
@@ -63,7 +63,7 @@ graph TB
 **Challenge**: Traditional portfolio optimization requires manual data collection, complex calculations, and periodic rebalancing - a time-intensive process prone to human error.
 
 **Solution**: Fully automated system that:
-- ✅ Scrapes and analyzes 50+ NASDAQ stocks monthly
+- ✅ Scrapes and analyzes all 100 NASDAQ-100 stocks monthly
 - ✅ Applies multiple sophisticated financial models
 - ✅ Generates actionable investment recommendations
 - ✅ Provides comprehensive performance tracking
@@ -158,7 +158,7 @@ graph TB
 #### **Phase 2: Stock Data Fetcher** (`src/stock_data_fetcher/`)
 ```python
 # Advanced data processing
-- 5-year historical data download for 50+ stocks
+- 5-year historical data download for all 100 NASDAQ-100 stocks
 - Annualized return/volatility calculations
 - Missing data handling and validation
 - Individual stock file management
@@ -263,7 +263,7 @@ data = ticker.history(period="5y")  # More reliable API
 
 **Solution**:
 - **NASDAQ Analyzer**: 1024MB (handles web scraping overhead)
-- **Stock Fetcher**: 2048MB (processes 50+ stocks simultaneously)  
+- **Stock Fetcher**: 2048MB (processes all 100 NASDAQ-100 stocks simultaneously)  
 - **Portfolio Optimizer**: 3008MB (complex matrix operations)
 
 **Impact**: 90% reduction in timeout errors, 40% faster execution.
@@ -381,9 +381,9 @@ aws events put-rule \
 ## 📈 Performance Metrics
 
 ### **System Performance**
-- **End-to-End Execution**: 20-30 minutes for 50 stocks
+- **End-to-End Execution**: 20-30 minutes for all 100 NASDAQ-100 stocks
 - **Success Rate**: 95%+ with automatic retry mechanisms
-- **Data Processing**: 5 years × 50 stocks = 65,000+ data points
+- **Data Processing**: 5 years × 100 NASDAQ-100 stocks = 130,000+ data points
 - **Cost Efficiency**: $3-5/month for monthly execution
 
 ### **Financial Performance**
@@ -445,7 +445,7 @@ aws events put-rule \
 - **Manual Analysis Reduction**: 20 hours/month → 30 minutes/month (95% time savings)
 - **Cost Savings**: $500/month traditional tools → $5/month AWS costs (99% cost reduction)
 - **Error Reduction**: Human error elimination through automation
-- **Scalability**: 50 stocks → 500+ stocks with linear cost scaling
+- **Scalability**: NASDAQ-100 (100 stocks) → S&P 500+ with linear cost scaling
 - **Availability**: 24/7 automated execution vs. business hours only
 
 ### **Strategic Advantages**

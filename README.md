@@ -2,13 +2,13 @@
 
 > **Live Demo:** [http://52.53.227.136:8501](http://52.53.227.136:8501) 📊
 
-A production-ready, cloud-native portfolio optimization system that analyzes the full NASDAQ-100 using multiple quantitative strategies with automated monthly execution and real-time benchmark comparison.
+A production-ready, cloud-native portfolio optimization system that analyzes all 100 NASDAQ-100 stocks using multiple quantitative strategies (Mean-Variance, Risk Parity, Black-Litterman) to determine if active optimization can outperform the vanilla NASDAQ-100 index on a risk-adjusted basis.
 
 ## 🎯 **Key Features**
 
 - **📈 Full NASDAQ-100 Analysis** - Processes all 100 stocks with 5-year historical data
 - **🧠 Multiple Optimization Models** - Mean-Variance, Risk Parity, Black-Litterman
-- **📊 Benchmark Comparison** - Alpha, Beta, and risk-adjusted performance vs NASDAQ-100
+- **📊 Benchmark Comparison** - Alpha, Beta, Sharpe ratio analysis to determine which optimization strategy beats vanilla NASDAQ-100
 - **☁️ Complete AWS Architecture** - Lambda, S3, Step Functions, EventBridge, EC2
 - **📱 Interactive Dashboard** - 5-page Streamlit interface with real-time AWS monitoring
 - **🔄 Automated Execution** - Monthly rebalancing via EventBridge Scheduler
@@ -156,14 +156,24 @@ MAX_STOCKS=100
 RISK_FREE_RATE=0.02
 ```
 
+## 🎯 **Core Research Question**
+
+**Can systematic portfolio optimization of NASDAQ-100 components deliver superior risk-adjusted returns compared to the vanilla NASDAQ-100 index?**
+
+The system tests this hypothesis by:
+- Applying 3 different optimization models to the same 100 stocks
+- Measuring Alpha generation (excess return above benchmark)
+- Calculating risk-adjusted performance metrics (Sharpe ratio, Information ratio)
+- Determining which approach delivers the best risk-return profile
+
 ## 📊 **Sample Output**
 
 The system generates comprehensive portfolio analysis including:
 
-- **Risk-Return Profiles** for each optimization strategy
-- **Alpha & Beta Analysis** vs NASDAQ-100 benchmark
-- **Portfolio Allocations** with downloadable CSV files
-- **Performance Attribution** and historical tracking
+- **Risk-Return Profiles** for each optimization strategy vs vanilla NASDAQ-100
+- **Alpha & Beta Analysis** showing which models beat the benchmark
+- **Portfolio Allocations** with downloadable CSV files for implementation
+- **Performance Attribution** tracking optimization effectiveness over time
 - **System Health Monitoring** with real-time alerts
 
 ## 🛠️ **Development**

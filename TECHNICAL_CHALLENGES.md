@@ -203,9 +203,9 @@ def get_stock_data(symbol):
 ```
 
 **Root Cause**: Initial Lambda functions configured with default 128MB
-memory and 3-minute timeout, insufficient for: - Processing 50+ stocks
+memory and 3-minute timeout, insufficient for: - Processing all 100 NASDAQ-100 stocks
 simultaneously - Complex matrix operations for portfolio optimization -
-Large dataset manipulation (5 years × 50 stocks)
+Large dataset manipulation (5 years × 100 NASDAQ-100 stocks)
 
 ### **Investigation Process**
 
@@ -218,7 +218,7 @@ Large dataset manipulation (5 years × 50 stocks)
     # Before data loading
     print(f"Memory before: {process.memory_info().rss / 1024 / 1024:.2f} MB")
 
-    # After loading 50 stocks × 5 years data
+    # After loading 100 NASDAQ-100 stocks × 5 years data
     print(f"Memory after: {process.memory_info().rss / 1024 / 1024:.2f} MB")
     # Result: 850MB+ memory usage
     ```
@@ -266,7 +266,7 @@ aws lambda update-function-configuration \
 
 aws lambda update-function-configuration \
   --function-name stock-data-fetcher-docker \
-  --memory-size 2048  # 50+ concurrent API calls + data aggregation
+  --memory-size 2048  # 100 NASDAQ-100 concurrent API calls + data aggregation
 
 aws lambda update-function-configuration \
   --function-name portfolio-optimizer-docker \
