@@ -1,0 +1,77 @@
+{
+  "Comment": "Portfolio Optimization Pipeline - Monthly Execution",
+  "StartAt": "Phase1NasdaqAnalyzer",
+  "States": {
+    "Phase1NasdaqAnalyzer": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "nasdaq-analyzer-docker",
+        "Payload": {
+          "trigger_type": "scheduled"
+        }
+      },
+      "ResultPath": "$.phase1_result",
+      "Next": "WaitAfterPhase1",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    },
+    "WaitAfterPhase1": {
+      "Type": "Wait",
+      "Seconds": 10,
+      "Next": "Phase2StockDataFetcher"
+    },
+    "Phase2StockDataFetcher": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "stock-data-fetcher-docker",
+        "Payload": {
+          "trigger_type": "scheduled"
+        }
+      },
+      "ResultPath": "$.phase2_result",
+      "Next": "WaitAfterPhase2",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    },
+    "WaitAfterPhase2": {
+      "Type": "Wait",
+      "Seconds": 10,
+      "Next": "Phase3PortfolioOptimizer"
+    },
+    "Phase3PortfolioOptimizer": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "portfolio-optimizer-docker",
+        "Payload": {
+          "trigger_type": "scheduled",
+          "optimization_models": ["mean_variance", "risk_parity", "black_litterman"]
+        }
+      },
+      "ResultPath": "$.phase3_result",
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ]
+    }
+  }
+}
