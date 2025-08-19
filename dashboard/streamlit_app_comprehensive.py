@@ -14,6 +14,10 @@ import json
 from datetime import datetime, timedelta
 import io
 from typing import Dict, List, Optional, Tuple
+from technical_analysis import (
+    StockDataFetcher, TechnicalAnalyzer, get_news_sentiment,
+    generate_ai_insights, calculate_risk_metrics
+)
 
 # Page configuration
 st.set_page_config(
@@ -1993,6 +1997,319 @@ def render_system_status(data: Dict[str, pd.DataFrame]):
     
 
 
+def render_technical_analysis(data):
+    """Render the technical analysis page for individual stock analysis"""
+    st.markdown('<h1 class="main-header">📊 Individual Stock Technical Analysis</h1>', unsafe_allow_html=True)
+    
+    # Create two columns for the layout
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.markdown("### 🔍 Stock Selection")
+        
+        # Stock symbol input
+        symbol = st.text_input(
+            "Enter Stock Symbol",
+            value="AAPL",
+            help="Enter any valid stock ticker symbol (e.g., AAPL, MSFT, GOOGL)"
+        ).upper()
+        
+        # Analysis period
+        period = st.selectbox(
+            "Analysis Period",
+            ["1mo", "3mo", "6mo", "1y"],
+            index=1,
+            help="Select the historical data period for analysis"
+        )
+        
+        # Analysis type
+        analysis_type = st.radio(
+            "Analysis Mode",
+            ["Quick Analysis", "Detailed Analysis"],
+            help="Quick Analysis shows key indicators, Detailed includes all metrics"
+        )
+        
+        # Analyze button
+        analyze_button = st.button("🚀 Analyze Stock", type="primary", use_container_width=True)
+        
+        # Quick stock buttons for NASDAQ-100 leaders
+        st.markdown("### 🎯 Quick Analysis")
+        st.markdown("**Top NASDAQ-100 Stocks:**")
+        
+        quick_stocks = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO"]
+        cols = st.columns(2)
+        for i, stock in enumerate(quick_stocks):
+            with cols[i % 2]:
+                if st.button(stock, key=f"quick_{stock}", use_container_width=True):
+                    symbol = stock
+                    analyze_button = True
+    
+    with col2:
+        if analyze_button or st.session_state.get('last_analyzed_symbol'):
+            # Store the symbol in session state
+            if analyze_button:
+                st.session_state.last_analyzed_symbol = symbol
+            else:
+                symbol = st.session_state.last_analyzed_symbol
+            
+            # Initialize components
+            fetcher = StockDataFetcher(period=period)
+            analyzer = TechnicalAnalyzer()
+            
+            # Fetch data
+            with st.spinner(f"Fetching data for {symbol}..."):
+                stock_data = fetcher.get_stock_data(symbol)
+                stock_info = fetcher.get_stock_info(symbol)
+            
+            if stock_data is not None and not stock_data.empty:
+                # Calculate indicators
+                indicators = analyzer.calculate_indicators(stock_data)
+                trend_analysis = analyzer.analyze_trend(indicators)
+                risk_metrics = calculate_risk_metrics(stock_data)
+                
+                # Display company info
+                st.markdown(f"### 🏢 {stock_info.get('name', symbol)}")
+                
+                info_cols = st.columns(4)
+                with info_cols[0]:
+                    st.metric("Sector", stock_info.get('sector', 'N/A'))
+                with info_cols[1]:
+                    st.metric("Industry", stock_info.get('industry', 'N/A'))
+                with info_cols[2]:
+                    if stock_info.get('pe_ratio') != 'N/A':
+                        st.metric("P/E Ratio", f"{stock_info.get('pe_ratio', 'N/A'):.2f}")
+                    else:
+                        st.metric("P/E Ratio", "N/A")
+                with info_cols[3]:
+                    if stock_info.get('beta') != 'N/A':
+                        st.metric("Beta", f"{stock_info.get('beta', 'N/A'):.2f}")
+                    else:
+                        st.metric("Beta", "N/A")
+                
+                # Price and trend information
+                st.markdown("### 💰 Price & Trend Analysis")
+                
+                price_cols = st.columns(4)
+                with price_cols[0]:
+                    st.metric(
+                        "Current Price",
+                        f"${indicators['Current_Price']:.2f}",
+                        f"{indicators['Price_Change_Pct']:.2f}%"
+                    )
+                with price_cols[1]:
+                    st.metric("Trend", trend_analysis['overall_trend'])
+                with price_cols[2]:
+                    st.metric("Momentum", trend_analysis['momentum'])
+                with price_cols[3]:
+                    rec_color = "🟢" if "Buy" in trend_analysis['recommendation'] else "🔴" if "Sell" in trend_analysis['recommendation'] else "🟡"
+                    st.metric("Signal", f"{rec_color} {trend_analysis['recommendation']}")
+                
+                # Technical indicators
+                st.markdown("### 📈 Technical Indicators")
+                
+                # Create tabs for different indicator categories
+                tab1, tab2, tab3, tab4 = st.tabs(["Moving Averages", "Momentum", "Volatility", "Risk Metrics"])
+                
+                with tab1:
+                    ma_cols = st.columns(3)
+                    with ma_cols[0]:
+                        st.metric("MA(20)", f"${indicators.get('MA_20', 0):.2f}")
+                    with ma_cols[1]:
+                        st.metric("MA(50)", f"${indicators.get('MA_50', 0):.2f}")
+                    with ma_cols[2]:
+                        ma_signal = "Above MAs ✅" if indicators['Current_Price'] > indicators.get('MA_20', 0) else "Below MAs ⚠️"
+                        st.metric("Position", ma_signal)
+                
+                with tab2:
+                    mom_cols = st.columns(3)
+                    with mom_cols[0]:
+                        rsi_val = indicators.get('RSI', 50)
+                        rsi_color = "🔴" if rsi_val > 70 else "🟢" if rsi_val < 30 else "🟡"
+                        st.metric("RSI(14)", f"{rsi_color} {rsi_val:.1f}")
+                    with mom_cols[1]:
+                        macd_val = indicators.get('MACD', 0)
+                        macd_color = "🟢" if macd_val > 0 else "🔴"
+                        st.metric("MACD", f"{macd_color} {macd_val:.3f}")
+                    with mom_cols[2]:
+                        st.metric("MACD Signal", f"{indicators.get('MACD_Signal', 0):.3f}")
+                
+                with tab3:
+                    vol_cols = st.columns(3)
+                    with vol_cols[0]:
+                        st.metric("Volatility", f"{risk_metrics.get('volatility', 0):.1f}%")
+                    with vol_cols[1]:
+                        st.metric("Volume Ratio", f"{indicators.get('Volume_Ratio', 1):.2f}x")
+                    with vol_cols[2]:
+                        st.metric("Volatility Status", trend_analysis['volatility'])
+                
+                with tab4:
+                    risk_cols = st.columns(4)
+                    with risk_cols[0]:
+                        st.metric("Max Drawdown", f"{risk_metrics.get('max_drawdown', 0):.1f}%")
+                    with risk_cols[1]:
+                        st.metric("Sharpe Ratio", f"{risk_metrics.get('sharpe_ratio', 0):.2f}")
+                    with risk_cols[2]:
+                        st.metric("95% VaR", f"{risk_metrics.get('var_95', 0):.2f}%")
+                    with risk_cols[3]:
+                        st.metric("Win Rate", f"{risk_metrics.get('winning_days_pct', 0):.1f}%")
+                
+                if analysis_type == "Detailed Analysis":
+                    # Price chart with technical indicators
+                    st.markdown("### 📊 Price Chart with Indicators")
+                    
+                    fig = make_subplots(
+                        rows=3, cols=1,
+                        shared_xaxes=True,
+                        vertical_spacing=0.05,
+                        row_heights=[0.5, 0.25, 0.25],
+                        subplot_titles=("Price & Moving Averages", "RSI", "Volume")
+                    )
+                    
+                    # Price and MAs
+                    fig.add_trace(
+                        go.Candlestick(
+                            x=stock_data.index,
+                            open=stock_data['Open'],
+                            high=stock_data['High'],
+                            low=stock_data['Low'],
+                            close=stock_data['Close'],
+                            name="Price"
+                        ),
+                        row=1, col=1
+                    )
+                    
+                    # Add moving averages
+                    ma_20 = stock_data['Close'].rolling(window=20).mean()
+                    ma_50 = stock_data['Close'].rolling(window=50).mean()
+                    
+                    fig.add_trace(
+                        go.Scatter(x=stock_data.index, y=ma_20, name="MA(20)", line=dict(color='orange')),
+                        row=1, col=1
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=stock_data.index, y=ma_50, name="MA(50)", line=dict(color='blue')),
+                        row=1, col=1
+                    )
+                    
+                    # RSI
+                    rsi_series = ta.rsi(stock_data['Close'], length=14)
+                    fig.add_trace(
+                        go.Scatter(x=stock_data.index, y=rsi_series, name="RSI", line=dict(color='purple')),
+                        row=2, col=1
+                    )
+                    fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
+                    fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
+                    
+                    # Volume
+                    colors = ['red' if close < open else 'green' 
+                             for close, open in zip(stock_data['Close'], stock_data['Open'])]
+                    fig.add_trace(
+                        go.Bar(x=stock_data.index, y=stock_data['Volume'], name="Volume", marker_color=colors),
+                        row=3, col=1
+                    )
+                    
+                    fig.update_layout(
+                        height=800,
+                        showlegend=True,
+                        xaxis_rangeslider_visible=False,
+                        title_text=f"{symbol} Technical Analysis"
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Support and Resistance levels
+                    st.markdown("### 🎯 Support & Resistance Levels")
+                    levels_cols = st.columns(3)
+                    with levels_cols[0]:
+                        st.metric("Support", f"${indicators.get('Support', 0):.2f}")
+                    with levels_cols[1]:
+                        st.metric("Current", f"${indicators['Current_Price']:.2f}")
+                    with levels_cols[2]:
+                        st.metric("Resistance", f"${indicators.get('Resistance', 0):.2f}")
+                    
+                    # Bollinger Bands info
+                    if indicators.get('BB_Upper'):
+                        st.markdown("### 📉 Bollinger Bands")
+                        bb_cols = st.columns(3)
+                        with bb_cols[0]:
+                            st.metric("Lower Band", f"${indicators.get('BB_Lower', 0):.2f}")
+                        with bb_cols[1]:
+                            st.metric("Middle Band", f"${indicators.get('BB_Middle', 0):.2f}")
+                        with bb_cols[2]:
+                            st.metric("Upper Band", f"${indicators.get('BB_Upper', 0):.2f}")
+                
+                # AI Insights
+                st.markdown("### 🤖 AI-Powered Insights")
+                insights = generate_ai_insights(indicators, trend_analysis, stock_info)
+                st.info(insights)
+                
+                # News Sentiment
+                st.markdown("### 📰 Recent News & Sentiment")
+                news_data = get_news_sentiment(symbol)
+                
+                if news_data:
+                    for article in news_data:
+                        sentiment_emoji = "✅" if article['sentiment'] == "Positive" else "❌" if article['sentiment'] == "Negative" else "⚪"
+                        with st.expander(f"{sentiment_emoji} {article['title'][:100]}..."):
+                            st.write(f"**Publisher:** {article['publisher']}")
+                            st.write(f"**Published:** {article['published']}")
+                            st.write(f"**Sentiment:** {article['sentiment']}")
+                            if article['link']:
+                                st.write(f"[Read Full Article]({article['link']})")
+                else:
+                    st.info("No recent news available for this stock")
+                
+                # Integration with portfolio optimization
+                st.markdown("### 🎯 Portfolio Integration")
+                integration_cols = st.columns(2)
+                
+                with integration_cols[0]:
+                    if st.button("➕ Add to Portfolio Analysis", type="secondary", use_container_width=True):
+                        if 'portfolio_stocks' not in st.session_state:
+                            st.session_state.portfolio_stocks = []
+                        if symbol not in st.session_state.portfolio_stocks:
+                            st.session_state.portfolio_stocks.append(symbol)
+                            st.success(f"Added {symbol} to portfolio analysis list")
+                        else:
+                            st.info(f"{symbol} is already in portfolio analysis list")
+                
+                with integration_cols[1]:
+                    if st.button("📊 Go to Portfolio Optimization", use_container_width=True):
+                        st.info("Switch to Portfolio Optimization page from the sidebar")
+                
+            else:
+                st.error(f"Unable to fetch data for {symbol}. Please check the symbol and try again.")
+        else:
+            st.info("👈 Enter a stock symbol and click 'Analyze Stock' to begin technical analysis")
+            
+            # Show some helpful information
+            st.markdown("""
+            ### 📚 How to Use This Tool
+            
+            1. **Enter a Stock Symbol:** Type any valid ticker symbol (e.g., AAPL for Apple)
+            2. **Select Analysis Period:** Choose how far back to analyze (1 month to 1 year)
+            3. **Choose Analysis Mode:** 
+               - Quick Analysis: Key indicators and recommendations
+               - Detailed Analysis: Full charts, all indicators, and comprehensive metrics
+            4. **Click Analyze:** Get instant technical analysis with AI-powered insights
+            
+            ### 📈 What You'll Get
+            
+            - **Technical Indicators:** Moving averages, RSI, MACD, Bollinger Bands
+            - **Trend Analysis:** Current trend direction and momentum
+            - **Risk Metrics:** Volatility, Sharpe ratio, maximum drawdown
+            - **AI Insights:** Smart recommendations based on all indicators
+            - **News Sentiment:** Recent news with sentiment analysis
+            - **Buy/Hold/Sell Signals:** Clear action recommendations
+            
+            ### 🎯 Perfect For
+            
+            - Pre-screening stocks before adding to portfolio
+            - Deep-dive analysis of individual positions
+            - Understanding technical entry/exit points
+            - Risk assessment of potential investments
+            """)
+
 def main():
     """Main application function"""
     initialize_session_state()
@@ -2006,7 +2323,8 @@ def main():
     # Page navigation with icons
     pages = {
         "🏠 Executive Summary": "Executive Summary",
-        "🔍 NASDAQ-100 Analysis": "Stock Analysis", 
+        "🔍 NASDAQ-100 Analysis": "Stock Analysis",
+        "📊 Technical Analysis": "Technical Analysis",
         "🎯 Portfolio Optimization": "Portfolio Optimization",
         "📈 Historical Tracking": "Historical Tracking",
         "⚙️ System Status": "System Status"
@@ -2034,7 +2352,9 @@ def main():
     
     🏠 **Executive Summary** - Overview and key metrics
     
-    🔍 **NASDAQ-100 Analysis** - Explore individual opportunities  
+    🔍 **NASDAQ-100 Analysis** - Explore individual opportunities
+    
+    📊 **Technical Analysis** - Deep-dive into individual stocks
     
     🎯 **Portfolio Optimization** - Compare strategies and download portfolios
     
@@ -2063,6 +2383,8 @@ def main():
         render_executive_summary(data)
     elif page == "Stock Analysis":
         render_stock_analysis(data)
+    elif page == "Technical Analysis":
+        render_technical_analysis(data)
     elif page == "Portfolio Optimization":
         # Pass the portfolio_data directly to the new function
         portfolio_data = data.get('portfolio_data', {}) if data else {}
