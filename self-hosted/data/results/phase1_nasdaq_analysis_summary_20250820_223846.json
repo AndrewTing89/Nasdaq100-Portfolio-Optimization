@@ -1,0 +1,10 @@
+{
+  "total_stocks": 100,
+  "timestamp": "20250820_223846",
+  "stocks_with_target_price": 89,
+  "mean_undervalue_rate": -0.07677722104610732,
+  "median_undervalue_rate": -0.16290076361130879,
+  "high_potential_stocks": 24,
+  "moderate_potential_stocks": 11,
+  "overvalued_stocks": 54
+}

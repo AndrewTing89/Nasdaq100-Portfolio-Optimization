@@ -1,0 +1,52 @@
+# ================================================================
+# Scheduler Service Dockerfile
+# Cron-based scheduler for automated portfolio analysis
+# ================================================================
+
+FROM alpine:3.18
+
+# Install required packages
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    py3-requests \
+    curl \
+    dcron \
+    bash \
+    tzdata
+
+# Set working directory
+WORKDIR /app
+
+# Copy scheduler scripts
+COPY scheduler/cron_scheduler.py .
+COPY scheduler/pipeline_trigger.sh .
+COPY scheduler/notification.py .
+
+# Make scripts executable
+RUN chmod +x pipeline_trigger.sh
+
+# Create cron user and directories
+RUN addgroup -S scheduler && adduser -S scheduler -G scheduler && \
+    mkdir -p /var/log/cron && \
+    chown -R scheduler:scheduler /app /var/log/cron
+
+# Copy crontab template
+COPY scheduler/crontab.template /etc/crontabs/scheduler
+
+# Create entrypoint script
+COPY scheduler/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Switch to non-root user for cron execution
+USER scheduler
+
+# Expose no ports (internal service)
+
+# Health check
+HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
+    CMD pgrep crond || exit 1
+
+# Start cron daemon
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["crond", "-f", "-l", "2"]

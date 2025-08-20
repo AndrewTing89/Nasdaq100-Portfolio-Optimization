@@ -1,0 +1,57 @@
+# ================================================================
+# Data Pipeline Service Dockerfile
+# Unified portfolio optimization pipeline replacing AWS Lambda functions
+# ================================================================
+
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create data directories
+RUN mkdir -p /data/{raw,processed,stocks,results,logs} && \
+    chmod -R 755 /data
+
+# Copy requirements first for better caching
+COPY requirements-data-pipeline.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements-data-pipeline.txt
+
+# Copy application code
+COPY src/simplified_pipeline.py .
+COPY src/data_pipeline.py .
+COPY src/fmp_client.py .
+COPY src/pipeline_wrapper.py .
+COPY src/health_api.py .
+COPY src/data_cleanup.py .
+
+# Set proper permissions for data directory
+RUN chmod -R 777 /data
+
+# Run as root for now to avoid permission issues
+# In production, use proper volume permissions
+# USER portfolio
+
+# Expose port for health checks and API
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python simplified_pipeline.py health || exit 1
+
+# Default command runs health API server
+CMD ["python", "health_api.py"]

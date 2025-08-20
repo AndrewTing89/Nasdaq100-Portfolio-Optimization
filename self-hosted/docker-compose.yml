@@ -1,0 +1,452 @@
+version: '3.8'
+
+# Production-ready Docker Compose configuration for Portfolio Optimization Suite
+# Replaces AWS serverless architecture with containerized services
+
+services:
+  # ===== POSTGRESQL DATABASE =====
+  postgres:
+    image: postgres:16-alpine
+    container_name: portfolio-postgres
+    restart: unless-stopped
+    environment:
+      # Database configuration
+      - POSTGRES_DB=${POSTGRES_DB:-portfolio_optimization}
+      - POSTGRES_USER=${POSTGRES_USER:-portfolio_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      # Performance tuning
+      - POSTGRES_SHARED_BUFFERS=${POSTGRES_SHARED_BUFFERS:-256MB}
+      - POSTGRES_MAX_CONNECTIONS=${POSTGRES_MAX_CONNECTIONS:-100}
+      - POSTGRES_WORK_MEM=${POSTGRES_WORK_MEM:-4MB}
+    volumes:
+      # Database persistence
+      - postgres-data:/var/lib/postgresql/data
+      # Initialization scripts
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+      # Configuration files
+      - ./database/config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      # Backup directory
+      - postgres-backups:/backups
+    networks:
+      - portfolio-network
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-portfolio_user} -d ${POSTGRES_DB:-portfolio_optimization}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c max_connections=100
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c effective_cache_size=1GB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+
+  # ===== DATA PIPELINE SERVICE =====
+  data-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.data-pipeline
+    container_name: portfolio-data-pipeline
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Configuration from environment
+      - DATA_DIR=/data
+      - USE_API_PIPELINE=${USE_API_PIPELINE:-true}  # Enable live data fetching
+      - FMP_API_KEY=${FMP_API_KEY:-USIa8HA0z2NCAdBwL1ZEHnpMaxe73DF8}
+      - RISK_FREE_RATE=${RISK_FREE_RATE:-0.02}
+      - MIN_WEIGHT_THRESHOLD=${MIN_WEIGHT_THRESHOLD:-0.01}
+      - MAX_STOCKS=${MAX_STOCKS:-100}
+      - RISK_AVERSION=${RISK_AVERSION:-2.5}
+      - TAU=${TAU:-0.025}
+      - HISTORICAL_PERIOD=${HISTORICAL_PERIOD:-5y}
+      - REQUEST_DELAY=${REQUEST_DELAY:-1.0}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      # Database configuration
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-portfolio_user}:${POSTGRES_PASSWORD:-secure_password}@postgres:5432/${POSTGRES_DB:-portfolio_optimization}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-portfolio_optimization}
+      - DB_USER=${POSTGRES_USER:-portfolio_user}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-secure_password}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-20}
+      # File storage (legacy support)
+      - ENABLE_FILE_STORAGE=${ENABLE_FILE_STORAGE:-true}
+      - ENABLE_DATABASE_STORAGE=${ENABLE_DATABASE_STORAGE:-true}
+      # Logging configuration
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # Persistent data storage (legacy)
+      - data-volume:/data
+      - logs-volume:/data/logs
+      # Host directories for backup/access
+      - ${HOST_DATA_DIR:-./data}:/host-data
+    networks:
+      - portfolio-network
+    ports:
+      # HTTP API for health checks and manual triggers
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "python", "/app/health_api.py", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ===== DASHBOARD SERVICE =====
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: portfolio-dashboard
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      data-pipeline:
+        condition: service_healthy
+    environment:
+      # Streamlit configuration
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - STREAMLIT_SERVER_ENABLE_CORS=false
+      - STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true
+      # Data access configuration
+      - DATA_DIR=/data
+      - PIPELINE_API_URL=http://data-pipeline:8080
+      # Database configuration
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-portfolio_user}:${POSTGRES_PASSWORD:-secure_password}@postgres:5432/${POSTGRES_DB:-portfolio_optimization}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-portfolio_optimization}
+      - DB_USER=${POSTGRES_USER:-portfolio_user}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-secure_password}
+      # UI configuration
+      - DASHBOARD_TITLE=${DASHBOARD_TITLE:-Portfolio Optimization Dashboard}
+      - DASHBOARD_ICON=${DASHBOARD_ICON:-📈}
+    volumes:
+      # Read-only access to data (legacy)
+      - data-volume:/data:ro
+      - logs-volume:/data/logs:ro
+    networks:
+      - portfolio-network
+    ports:
+      - "8501:8501"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ===== SCHEDULER SERVICE =====
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.scheduler
+    container_name: portfolio-scheduler
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      data-pipeline:
+        condition: service_healthy
+    environment:
+      # Cron configuration
+      - CRON_SCHEDULE=${CRON_SCHEDULE:-0 6 * * *}  # Daily at 6 AM UTC
+      - PIPELINE_URL=http://data-pipeline:8080
+      - TZ=${TIMEZONE:-UTC}
+      # Database configuration
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-portfolio_user}:${POSTGRES_PASSWORD:-secure_password}@postgres:5432/${POSTGRES_DB:-portfolio_optimization}
+      # Notification settings
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
+      - NOTIFICATION_ENABLED=${NOTIFICATION_ENABLED:-false}
+    volumes:
+      # Access to logs for monitoring
+      - logs-volume:/data/logs
+      # Cron logs
+      - ./logs/cron:/var/log/cron
+    networks:
+      - portfolio-network
+    healthcheck:
+      test: ["CMD", "pgrep", "crond"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ===== NGINX REVERSE PROXY =====
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: portfolio-nginx
+    restart: unless-stopped
+    depends_on:
+      - dashboard
+      - data-pipeline
+    environment:
+      - NGINX_HOST=${NGINX_HOST:-localhost}
+      - NGINX_PORT=${NGINX_PORT:-80}
+    volumes:
+      # Nginx configuration
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx-default.conf:/etc/nginx/conf.d/default.conf:ro
+      # SSL certificates (if using HTTPS)
+      - ${SSL_CERT_DIR:-./config/ssl}:/etc/nginx/ssl:ro
+      # Static files (optional)
+      - ./static:/usr/share/nginx/html/static:ro
+    networks:
+      - portfolio-network
+    ports:
+      # HTTP and HTTPS
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ===== REDIS CACHE (Optional) =====
+  redis:
+    image: redis:7-alpine
+    container_name: portfolio-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - portfolio-network
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ===== DATABASE BACKUP SERVICE =====
+  db-backup:
+    image: postgres:16-alpine
+    container_name: portfolio-db-backup
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PGPASSWORD=${POSTGRES_PASSWORD:-secure_password}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-portfolio_optimization}
+      - POSTGRES_USER=${POSTGRES_USER:-portfolio_user}
+      - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}  # Daily at 2 AM
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - postgres-backups:/backups
+      - ./database/scripts:/scripts:ro
+    networks:
+      - portfolio-network
+    profiles:
+      - backup
+    command: >
+      sh -c "
+      echo '${BACKUP_SCHEDULE:-0 2 * * *} /scripts/backup.sh' | crontab - &&
+      crond -f -l 2
+      "
+
+  # ===== CLOUDFLARE TUNNEL (Optional) =====
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: portfolio-cloudflare-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+    networks:
+      - portfolio-network
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    profiles:
+      # Only start if cloudflare profile is activated
+      - cloudflare
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+# ===== VOLUMES =====
+volumes:
+  # PostgreSQL database persistence
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${HOST_DB_DIR:-./database/data}
+      o: bind
+
+  # Database backups
+  postgres-backups:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${HOST_BACKUP_DIR:-./database/backups}
+      o: bind
+
+  # Legacy file-based data storage (for migration period)
+  data-volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${HOST_DATA_DIR:-./data}
+      o: bind
+  
+  # Centralized logging
+  logs-volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${HOST_LOGS_DIR:-./logs}
+      o: bind
+  
+  # Redis persistence
+  redis-data:
+    driver: local
+
+# ===== NETWORKS =====
+networks:
+  portfolio-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+    driver_opts:
+      com.docker.network.bridge.name: portfolio-br0
+
+# ===== CONFIGURATION PROFILES =====
+# Usage examples:
+# docker-compose up                          # Start core services
+# docker-compose --profile cloudflare up    # Include Cloudflare tunnel
+# docker-compose --profile development up   # Development mode
+# docker-compose --profile backup up        # Include backup service
+
+x-development-overrides: &dev-overrides
+  # Development-specific configurations
+  volumes:
+    - ./src:/app/src:ro  # Mount source code for live reload
+  environment:
+    - DEBUG=true
+    - LOG_LEVEL=DEBUG
+  profiles:
+    - development
+
+# ===== HEALTHCHECK EXTENSIONS =====
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+
+# ===== RESOURCE LIMITS =====
+x-resource-limits: &resource-limits
+  deploy:
+    resources:
+      limits:
+        memory: 1G
+      reservations:
+        memory: 512M
+
+# ===== LOGGING CONFIGURATION =====
+x-logging-defaults: &logging-defaults
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+      compress: "true"

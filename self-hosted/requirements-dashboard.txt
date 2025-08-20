@@ -1,0 +1,46 @@
+# ================================================================
+# Dashboard Service Requirements
+# Streamlit and visualization dependencies
+# ================================================================
+
+# Streamlit framework
+streamlit==1.29.0
+
+# Data manipulation
+pandas==2.1.4
+numpy==1.25.2
+
+# Financial data and technical analysis
+yfinance==0.2.18
+pandas-ta==0.3.14b0
+
+# Visualization libraries
+plotly==5.17.0
+matplotlib==3.8.2
+seaborn==0.13.0
+
+# Additional Streamlit components
+streamlit-plotly-events==0.0.6
+streamlit-aggrid==0.3.4.post3
+
+# API communication
+requests==2.31.0
+
+# Date and time handling
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Configuration
+python-dotenv==1.0.0
+
+# System monitoring
+psutil==5.9.6
+
+# Data validation
+pydantic==2.5.2
+
+# File handling
+openpyxl==3.1.2
+
+# Styling and layout
+streamlit-elements==0.1.0

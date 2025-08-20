@@ -1,0 +1,95 @@
+{
+  "total_stocks": 100,
+  "successfully_processed": 100,
+  "failed_stocks": 0,
+  "failed_stock_list": [],
+  "timestamp": "20250820_223925",
+  "mean_annual_return": 0.20702325290086454,
+  "median_annual_return": 0.16356652378232894,
+  "mean_annual_volatility": 0.377224388423209,
+  "median_annual_volatility": 0.3481815876717531,
+  "top_performers": [
+    {
+      "Symbol": "MSTR",
+      "Annual_Return_5Y": 1.0894356987837661
+    },
+    {
+      "Symbol": "PLTR",
+      "Annual_Return_5Y": 0.8297517429142247
+    },
+    {
+      "Symbol": "APP",
+      "Annual_Return_5Y": 0.7190559066600252
+    },
+    {
+      "Symbol": "ARM",
+      "Annual_Return_5Y": 0.6863711419201286
+    },
+    {
+      "Symbol": "CEG",
+      "Annual_Return_5Y": 0.6855347914402711
+    },
+    {
+      "Symbol": "NVDA",
+      "Annual_Return_5Y": 0.6660228822494193
+    },
+    {
+      "Symbol": "AXON",
+      "Annual_Return_5Y": 0.5531568009010959
+    },
+    {
+      "Symbol": "AVGO",
+      "Annual_Return_5Y": 0.5201419717569564
+    },
+    {
+      "Symbol": "CRWD",
+      "Annual_Return_5Y": 0.40175681413340786
+    },
+    {
+      "Symbol": "KLAC",
+      "Annual_Return_5Y": 0.3830822096797567
+    }
+  ],
+  "most_volatile": [
+    {
+      "Symbol": "MSTR",
+      "Annual_Volatility_5Y": 0.9554312472319451
+    },
+    {
+      "Symbol": "APP",
+      "Annual_Volatility_5Y": 0.7818932262816339
+    },
+    {
+      "Symbol": "ARM",
+      "Annual_Volatility_5Y": 0.7762236506352849
+    },
+    {
+      "Symbol": "PDD",
+      "Annual_Volatility_5Y": 0.7277111626508104
+    },
+    {
+      "Symbol": "PLTR",
+      "Annual_Volatility_5Y": 0.7234395014598759
+    },
+    {
+      "Symbol": "TTD",
+      "Annual_Volatility_5Y": 0.6976640837963974
+    },
+    {
+      "Symbol": "SHOP",
+      "Annual_Volatility_5Y": 0.6553582416498566
+    },
+    {
+      "Symbol": "TSLA",
+      "Annual_Volatility_5Y": 0.6307038937745586
+    },
+    {
+      "Symbol": "DASH",
+      "Annual_Volatility_5Y": 0.5866140482482105
+    },
+    {
+      "Symbol": "MRVL",
+      "Annual_Volatility_5Y": 0.569918828106036
+    }
+  ]
+}
