@@ -1220,32 +1220,182 @@ def render_portfolio_optimization(data):
     
     # Risk-Return Scatter Plot
     st.subheader("🎯 Risk-Return Analysis")
-    st.info("💡 **How to read this chart:** Each dot is a different investment strategy. The best strategies are in the top-left corner (high return, low risk). Bigger, darker circles have better Sharpe ratios. Click and drag to zoom in!")
+    st.info("💡 **How to read this chart:** Each dot is a different investment strategy. The best strategies are in the top-left corner (high return, low risk). Bigger, darker circles have better Sharpe ratios. Hover over points for details!")
+    
+    # Create shorter labels
+    model_labels = {
+        'mv_historical_max_sharpe': 'MV Hist Sharpe',
+        'mv_historical_min_vol': 'MV Hist MinVol',
+        'mv_undervalue_max_sharpe': 'MV Under Sharpe',
+        'mv_undervalue_min_vol': 'MV Under MinVol',
+        'rp_historical': 'RP Historical',
+        'rp_undervalue': 'RP Undervalue'
+    }
+    
+    # Add display names and identify overlapping points
+    comparison_df['Display_Name'] = comparison_df['Model'].map(lambda x: model_labels.get(x, x))
+    
+    # Sort to ensure consistent ordering
+    comparison_df_sorted = comparison_df.sort_values(['Volatility', 'Return'])
+    
+    # Detect overlapping points and adjust positions
+    positions = []
+    offset_y = []
+    offset_x = []
+    
+    for i, row in comparison_df_sorted.iterrows():
+        # Check for nearby points
+        is_close = False
+        for j, other in comparison_df_sorted.iterrows():
+            if i != j:
+                x_dist = abs(row['Volatility'] - other['Volatility'])
+                y_dist = abs(row['Return'] - other['Return'])
+                if x_dist < 0.01 and y_dist < 0.05:  # Points are close
+                    is_close = True
+                    break
+        
+        # Assign position based on model type to ensure consistency
+        if 'min_vol' in row['Model']:
+            positions.append('bottom center')
+            offset_y.append(-0.02)
+            offset_x.append(0)
+        elif 'max_sharpe' in row['Model']:
+            positions.append('top center')
+            offset_y.append(0.02)
+            offset_x.append(0)
+        elif 'rp_' in row['Model']:
+            positions.append('middle right')
+            offset_y.append(0)
+            offset_x.append(0.005)
+        else:
+            positions.append('top center')
+            offset_y.append(0)
+            offset_x.append(0)
+    
+    comparison_df_sorted['text_position'] = positions
+    comparison_df_sorted['y_offset'] = offset_y
+    comparison_df_sorted['x_offset'] = offset_x
     
     fig_scatter = go.Figure()
+    
+    # Add all points with hover info only (no text labels)
     fig_scatter.add_trace(go.Scatter(
-        x=comparison_df['Volatility'],
-        y=comparison_df['Return'],
-        mode='markers+text',
-        text=comparison_df['Model'],
-        textposition="top center",
+        x=comparison_df_sorted['Volatility'],
+        y=comparison_df_sorted['Return'],
+        mode='markers',
         marker=dict(
-            size=comparison_df['Sharpe_Ratio'] * 20,
-            color=comparison_df['Sharpe_Ratio'],
+            size=comparison_df_sorted['Sharpe_Ratio'] * 25 + 15,  # Minimum size of 15
+            color=comparison_df_sorted['Sharpe_Ratio'],
             colorscale='Viridis',
             showscale=True,
-            colorbar=dict(title="Sharpe Ratio")
+            colorbar=dict(title="Sharpe<br>Ratio"),
+            line=dict(color='white', width=2)  # White border for clarity
         ),
-        hovertemplate="<b>%{text}</b><br>Return: %{y:.2%}<br>Volatility: %{x:.2%}<br>Sharpe: %{marker.color:.2f}<extra></extra>"
+        text=comparison_df_sorted['Display_Name'],
+        hovertemplate="<b>%{text}</b><br>" +
+                     "Return: %{y:.2%}<br>" +
+                     "Volatility: %{x:.2%}<br>" +
+                     "Sharpe: %{marker.color:.2f}<extra></extra>",
+        showlegend=False
     ))
     
+    # Add text annotations separately with smart positioning
+    for idx, row in comparison_df_sorted.iterrows():
+        fig_scatter.add_annotation(
+            x=row['Volatility'] + row['x_offset'],
+            y=row['Return'] + row['y_offset'],
+            text=row['Display_Name'],
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1,
+            arrowwidth=1,
+            arrowcolor="gray",
+            ax=0,
+            ay=-30 if 'min_vol' in row['Model'] else 30,
+            font=dict(size=9, color="black"),
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="gray",
+            borderwidth=1
+        )
+    
     fig_scatter.update_layout(
-        title="Portfolio Models: Risk vs Return Profile",
-        xaxis_title="Volatility (Risk)",
-        yaxis_title="Expected Return",
-        height=500
+        title="Portfolio Models: Risk vs Return Profile (All 6 Models)",
+        xaxis_title="Volatility (Risk) →",
+        yaxis_title="Expected Return ↑",
+        height=600,  # Increased height for better spacing
+        xaxis=dict(
+            tickformat='.1%',
+            gridcolor='lightgray',
+            showgrid=True,
+            range=[comparison_df['Volatility'].min() * 0.95, comparison_df['Volatility'].max() * 1.05]
+        ),
+        yaxis=dict(
+            tickformat='.1%',
+            gridcolor='lightgray',
+            showgrid=True,
+            range=[comparison_df['Return'].min() * 0.95, comparison_df['Return'].max() * 1.05]
+        ),
+        plot_bgcolor='white',
+        hovermode='closest'
     )
+    
     st.plotly_chart(fig_scatter, use_container_width=True)
+    
+    # Model Analysis - Are some models redundant?
+    st.subheader("📊 Model Comparison Analysis")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### Model Characteristics")
+        st.markdown("""
+        **📈 Max Sharpe Models** (Historical & Undervalue):
+        - Optimize for best risk-adjusted returns
+        - Typically select 10-15 stocks
+        - Higher concentration, higher returns
+        
+        **🛡️ Min Volatility Models** (Historical & Undervalue):
+        - Optimize for lowest risk
+        - Typically select 20-25 stocks
+        - Lower returns but smoother ride
+        
+        **⚖️ Risk Parity Models** (Historical & Undervalue):
+        - Equal risk contribution from all stocks
+        - Include all 100+ stocks
+        - Maximum diversification
+        """)
+    
+    with col2:
+        st.markdown("### Key Differences")
+        
+        # Calculate differences between similar models
+        hist_vs_under_sharpe = abs(comparison_df[comparison_df['Model'] == 'mv_historical_max_sharpe']['Return'].values[0] - 
+                                   comparison_df[comparison_df['Model'] == 'mv_undervalue_max_sharpe']['Return'].values[0])
+        hist_vs_under_minvol = abs(comparison_df[comparison_df['Model'] == 'mv_historical_min_vol']['Return'].values[0] - 
+                                   comparison_df[comparison_df['Model'] == 'mv_undervalue_min_vol']['Return'].values[0])
+        
+        st.info(f"""
+        **Historical vs Undervalue Differences:**
+        - Max Sharpe models differ by {hist_vs_under_sharpe:.1%} in returns
+        - Min Vol models differ by {hist_vs_under_minvol:.1%} in returns
+        
+        **Why keep both?**
+        - Historical: Based on past performance
+        - Undervalue: Based on analyst predictions
+        - Different market conditions favor different approaches
+        """)
+    
+    # Show which models are most different
+    st.markdown("### 🎯 Model Uniqueness")
+    st.markdown("""
+    Each model serves a different investor profile:
+    1. **MV Historical Max Sharpe** - Aggressive growth based on history
+    2. **MV Undervalue Max Sharpe** - Aggressive growth based on analyst views  
+    3. **MV Historical Min Vol** - Conservative based on history
+    4. **MV Undervalue Min Vol** - Conservative based on analyst views
+    5. **Risk Parity Historical** - Maximum diversification using past data
+    6. **Risk Parity Undervalue** - Maximum diversification using forward-looking data
+    """)
     
     # Benchmark Comparison
     if 'benchmark_metrics' in st.session_state and st.session_state.get('data', {}).get('benchmark_metrics'):
