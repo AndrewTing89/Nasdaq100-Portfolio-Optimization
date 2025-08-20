@@ -1164,7 +1164,7 @@ def render_portfolio_optimization(data):
     st.markdown('<h1 class="main-header">🎯 Portfolio Optimization</h1>', unsafe_allow_html=True)
     
     # Data freshness indicator
-    if data['phase3_summary']:
+    if data and 'phase3_summary' in data and data['phase3_summary']:
         optimization_time = data['phase3_summary'].get('timestamp', 'Unknown')
         st.info(f"🕐 **Portfolio models optimized:** {optimization_time}")
     
