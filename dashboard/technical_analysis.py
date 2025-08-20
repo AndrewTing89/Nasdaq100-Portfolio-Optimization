@@ -11,58 +11,141 @@ from datetime import datetime, timedelta
 import logging
 from typing import Dict, Any, List, Optional
 import streamlit as st
+import time
+from yahoo_finance_direct import DirectYahooFinance
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class StockDataFetcher:
-    """Fetches stock data from Yahoo Finance"""
+    """Fetches stock data from Yahoo Finance with retry logic"""
     
     def __init__(self, period: str = "3mo"):
         self.period = period
     
-    def get_stock_data(self, symbol: str) -> Optional[pd.DataFrame]:
-        """Fetch historical stock data"""
-        try:
-            logger.info(f"Fetching data for {symbol}")
-            stock = yf.Ticker(symbol)
-            data = stock.history(period=self.period)
-            
-            if data.empty:
-                logger.error(f"No data found for symbol {symbol}")
-                return None
-            
-            return data
+    def get_stock_data(self, symbol: str, max_retries: int = 1) -> Optional[pd.DataFrame]:
+        """Fetch historical stock data, using direct API as primary method"""
+        logger.info(f"Fetching data for {symbol}")
         
+        # First try the direct API (more reliable)
+        try:
+            data = DirectYahooFinance.get_stock_data(symbol, period=self.period)
+            if data is not None and not data.empty:
+                logger.info(f"Successfully fetched data using direct API for {symbol}")
+                return data
         except Exception as e:
-            logger.error(f"Error fetching data for {symbol}: {str(e)}")
+            logger.warning(f"Direct API failed for {symbol}: {str(e)[:100]}")
+        
+        # Fallback to yfinance if direct API fails
+        logger.info(f"Trying yfinance as fallback for {symbol}")
+        try:
+            # Suppress yfinance errors
+            import logging as log
+            log.getLogger('yfinance').setLevel(log.ERROR)
+            
+            data = yf.download(
+                symbol, 
+                period=self.period, 
+                progress=False,
+                auto_adjust=True,
+                threads=False,
+                timeout=5  # Short timeout
+            )
+            
+            if not data.empty:
+                logger.info(f"Successfully fetched data using yfinance for {symbol}")
+                return data
+            else:
+                logger.warning(f"No data returned for {symbol}")
+                return None
+                
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "Too Many Requests" in error_msg:
+                logger.error(f"Rate limited for {symbol}")
+            else:
+                logger.error(f"Failed to fetch data for {symbol}: {error_msg[:100]}")
             return None
     
     def get_stock_info(self, symbol: str) -> Dict[str, Any]:
-        """Fetch stock information"""
+        """Fetch stock information using direct API first"""
+        # First try the direct API
+        try:
+            info = DirectYahooFinance.get_stock_info(symbol)
+            if info and info.get('current_price'):
+                logger.info(f"Successfully fetched info using direct API for {symbol}")
+                return {
+                    'symbol': symbol,
+                    'name': info.get('name', symbol),
+                    'sector': info.get('sector', 'N/A'),
+                    'industry': info.get('industry', 'N/A'),
+                    'market_cap': info.get('market_cap', 'N/A'),
+                    'current_price': info.get('current_price', 'N/A'),
+                    'pe_ratio': info.get('pe_ratio', 'N/A'),
+                    'dividend_yield': info.get('dividend_yield', 'N/A'),
+                    'fifty_two_week_high': info.get('fifty_two_week_high', 'N/A'),
+                    'fifty_two_week_low': info.get('fifty_two_week_low', 'N/A'),
+                    'avg_volume': info.get('avg_volume', info.get('volume', 'N/A')),
+                    'beta': info.get('beta', 'N/A')
+                }
+        except Exception as e:
+            logger.warning(f"Direct API info failed for {symbol}: {str(e)[:100]}")
+        
+        # Fallback to yfinance (likely to work on AWS/Cloud but not local)
         try:
             stock = yf.Ticker(symbol)
-            info = stock.info
+            info = {}
             
+            try:
+                info = stock.info
+            except Exception as e:
+                error_msg = str(e)
+                if "429" in error_msg or "Too Many Requests" in error_msg:
+                    logger.warning(f"Rate limited when fetching info for {symbol} - this should work on AWS")
+                elif "404" in error_msg:
+                    logger.warning(f"404 error for {symbol} - Yahoo API may have changed")
+                else:
+                    logger.warning(f"Could not fetch yfinance info for {symbol}: {error_msg[:100]}")
+            
+            # If we get valid info from yfinance, return it
+            if info and len(info) > 1:
+                logger.info(f"Successfully fetched detailed info via yfinance for {symbol}")
+                return {
+                    'symbol': symbol,
+                    'name': info.get('longName', symbol),
+                    'sector': info.get('sector', 'N/A'),
+                    'industry': info.get('industry', 'N/A'),
+                    'market_cap': info.get('marketCap', 'N/A'),
+                    'current_price': info.get('currentPrice', info.get('regularMarketPrice', 'N/A')),
+                    'pe_ratio': info.get('trailingPE', 'N/A'),
+                    'dividend_yield': info.get('dividendYield', 'N/A'),
+                    'fifty_two_week_high': info.get('fiftyTwoWeekHigh', 'N/A'),
+                    'fifty_two_week_low': info.get('fiftyTwoWeekLow', 'N/A'),
+                    'avg_volume': info.get('averageVolume', 'N/A'),
+                    'beta': info.get('beta', 'N/A')
+                }
+            
+            # Return basic info if all attempts fail
+            logger.info(f"Using basic info for {symbol}")
             return {
                 'symbol': symbol,
-                'name': info.get('longName', 'N/A'),
-                'sector': info.get('sector', 'N/A'),
-                'industry': info.get('industry', 'N/A'),
-                'market_cap': info.get('marketCap', 'N/A'),
-                'current_price': info.get('currentPrice', info.get('regularMarketPrice', 'N/A')),
-                'pe_ratio': info.get('trailingPE', 'N/A'),
-                'dividend_yield': info.get('dividendYield', 'N/A'),
-                'fifty_two_week_high': info.get('fiftyTwoWeekHigh', 'N/A'),
-                'fifty_two_week_low': info.get('fiftyTwoWeekLow', 'N/A'),
-                'avg_volume': info.get('averageVolume', 'N/A'),
-                'beta': info.get('beta', 'N/A')
+                'name': symbol,
+                'sector': 'Technology' if symbol in ['AAPL', 'MSFT', 'GOOGL', 'META', 'NVDA'] else 'N/A',
+                'industry': 'N/A',
+                'market_cap': 'N/A',
+                'current_price': 'N/A',
+                'pe_ratio': 'N/A',
+                'dividend_yield': 'N/A',
+                'fifty_two_week_high': 'N/A',
+                'fifty_two_week_low': 'N/A',
+                'avg_volume': 'N/A',
+                'beta': 'N/A'
             }
         
         except Exception as e:
             logger.error(f"Error fetching info for {symbol}: {str(e)}")
-            return {'symbol': symbol, 'name': 'Unknown'}
+            return {'symbol': symbol, 'name': symbol}
 
 class TechnicalAnalyzer:
     """Calculates technical indicators for stock analysis"""

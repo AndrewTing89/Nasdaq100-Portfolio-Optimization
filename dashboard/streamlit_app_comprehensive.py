@@ -2192,6 +2192,7 @@ def render_technical_analysis(data):
                     )
                     
                     # RSI
+                    import pandas_ta as ta
                     rsi_series = ta.rsi(stock_data['Close'], length=14)
                     fig.add_trace(
                         go.Scatter(x=stock_data.index, y=rsi_series, name="RSI", line=dict(color='purple')),
