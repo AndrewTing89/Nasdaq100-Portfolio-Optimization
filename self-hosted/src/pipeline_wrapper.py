@@ -15,18 +15,12 @@ class PipelineWrapper:
     def __init__(self, data_dir: str = "/data"):
         self.data_dir = data_dir
         
-        # Check environment variable to determine which pipeline to use
-        self.use_api = os.environ.get('USE_API_PIPELINE', 'false').lower() == 'true'
-        
-        if self.use_api:
-            logger.info("Using API-based pipeline (FMP)")
-            from data_pipeline import DataPipeline, Config
-            config = Config.from_env()
-            self.pipeline = DataPipeline(config)
-        else:
-            logger.info("Using CSV-based pipeline (local files)")
-            from simplified_pipeline import SimplifiedPipeline
-            self.pipeline = SimplifiedPipeline(data_dir)
+        # Always use FMP API pipeline - no CSV fallback
+        logger.info("Using FMP API pipeline for live market data")
+        from data_pipeline import DataPipeline, Config
+        config = Config.from_env()
+        self.pipeline = DataPipeline(config)
+        self.use_api = True  # Always true now
     
     def health_check(self) -> Dict[str, Any]:
         """Health check"""

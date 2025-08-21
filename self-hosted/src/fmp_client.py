@@ -26,7 +26,7 @@ class FMPClient:
         self.api_key = api_key or os.environ.get('FMP_API_KEY', 'USIa8HA0z2NCAdBwL1ZEHnpMaxe73DF8')
         self.base_url = "https://financialmodelingprep.com/api/v3"
         self.session = requests.Session()
-        self.rate_limit_delay = 1.0  # 1 second between requests to avoid rate limits
+        self.rate_limit_delay = float(os.environ.get('REQUEST_DELAY', '0.2'))  # 0.2 seconds = 300 requests/minute
         
     def _make_request(self, endpoint: str, params: Dict = None) -> Optional[Any]:
         """Make API request with error handling"""

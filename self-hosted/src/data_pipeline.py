@@ -307,31 +307,57 @@ class NasdaqAnalyzer:
         
         # Limit the number of stocks to process
         test_components = components[:self.config.max_stocks]
-        logging.info(f"Processing first {len(test_components)} components")
+        logging.info(f"Processing first {len(test_components)} components using parallel processing")
         
         results = []
-        for i, (company, symbol) in enumerate(test_components):
+        
+        # Define function for parallel processing
+        def process_single_stock(args):
+            i, company, symbol = args
             logging.info(f"Processing {i+1}/{len(test_components)}: {company} ({symbol})...")
             
             for attempt in range(self.config.max_retries):
                 prev_close, target_est = self.get_stock_data(symbol)
                 if prev_close is not None or attempt == self.config.max_retries - 1:
                     break
-                time.sleep(self.config.request_delay)
+                if attempt < self.config.max_retries - 1:
+                    time.sleep(self.config.request_delay)
             
             undervalue_rate = self.calculate_undervalue_rate(target_est, prev_close)
             
-            results.append({
+            return {
                 "Company": company,
                 "Symbol": symbol,
                 "Previous Close": prev_close,
                 "1y Target Est": target_est,
                 "Undervalue Rate": undervalue_rate
-            })
+            }
+        
+        # Use ThreadPoolExecutor for parallel processing (10 workers for faster processing)
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            # Prepare arguments for parallel processing
+            stock_args = [(i, company, symbol) for i, (company, symbol) in enumerate(test_components)]
             
-            # Rate limiting
-            if i < len(test_components) - 1:
-                time.sleep(self.config.request_delay)
+            # Process all stocks in parallel
+            future_to_stock = {executor.submit(process_single_stock, args): args for args in stock_args}
+            
+            for future in future_to_stock:
+                try:
+                    result = future.result(timeout=30)
+                    results.append(result)
+                    processed_count = len(results)
+                    if processed_count % 10 == 0:
+                        logging.info(f"Processed {processed_count}/{len(test_components)} stocks...")
+                except Exception as e:
+                    args = future_to_stock[future]
+                    logging.error(f"Failed to process {args[2]}: {e}")
+                    results.append({
+                        "Company": args[1],
+                        "Symbol": args[2],
+                        "Previous Close": None,
+                        "1y Target Est": None,
+                        "Undervalue Rate": None
+                    })
         
         # Create results DataFrame
         df_results = pd.DataFrame(results)
@@ -488,8 +514,8 @@ class StockDataFetcher:
         failed_stocks = []
         individual_stock_data = {}
         
-        # Use ThreadPoolExecutor for concurrent downloads
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        # Use ThreadPoolExecutor for concurrent downloads (10 workers for faster processing)
+        with ThreadPoolExecutor(max_workers=10) as executor:
             # Submit all download tasks
             future_to_symbol = {
                 executor.submit(self.download_stock_data, row['Symbol']): (i, row['Symbol'])

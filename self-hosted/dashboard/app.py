@@ -1220,126 +1220,194 @@ def render_portfolio_optimization(data):
     
     # Risk-Return Scatter Plot
     st.subheader("🎯 Risk-Return Analysis")
-    st.info("💡 **How to read this chart:** Each dot is a different investment strategy. The best strategies are in the top-left corner (high return, low risk). Bigger, darker circles have better Sharpe ratios. Hover over points for details!")
+    
+    # Add toggle for label display
+    col_opt1, col_opt2, col_opt3 = st.columns([1, 1, 2])
+    with col_opt1:
+        show_labels = st.checkbox("Show Labels", value=True, help="Toggle model labels on/off")
+    with col_opt2:
+        apply_jitter = st.checkbox("Separate Overlapping", value=True, help="Slightly separate overlapping points")
+    
+    st.info("💡 **How to read this chart:** Each dot is a different investment strategy. The best strategies are in the top-left corner (high return, low risk). Bigger, darker circles have better Sharpe ratios. Hover over points for full details!")
     
     # Create shorter labels
     model_labels = {
-        'mv_historical_max_sharpe': 'MV Hist Sharpe',
-        'mv_historical_min_vol': 'MV Hist MinVol',
-        'mv_undervalue_max_sharpe': 'MV Under Sharpe',
-        'mv_undervalue_min_vol': 'MV Under MinVol',
-        'rp_historical': 'RP Historical',
-        'rp_undervalue': 'RP Undervalue'
+        'mv_historical_max_sharpe': 'Hist MaxSharpe',
+        'mv_historical_min_vol': 'Hist MinVol',
+        'mv_undervalue_max_sharpe': 'Under MaxSharpe',
+        'mv_undervalue_min_vol': 'Under MinVol',
+        'rp_historical': 'RP Hist',
+        'rp_undervalue': 'RP Under'
     }
     
-    # Add display names and identify overlapping points
+    # Add display names
     comparison_df['Display_Name'] = comparison_df['Model'].map(lambda x: model_labels.get(x, x))
     
-    # Sort to ensure consistent ordering
-    comparison_df_sorted = comparison_df.sort_values(['Volatility', 'Return'])
+    # Make a copy for plotting
+    plot_df = comparison_df.copy()
     
-    # Detect overlapping points and adjust positions
-    positions = []
-    offset_y = []
-    offset_x = []
-    
-    for i, row in comparison_df_sorted.iterrows():
-        # Check for nearby points
-        is_close = False
-        for j, other in comparison_df_sorted.iterrows():
-            if i != j:
-                x_dist = abs(row['Volatility'] - other['Volatility'])
-                y_dist = abs(row['Return'] - other['Return'])
-                if x_dist < 0.01 and y_dist < 0.05:  # Points are close
-                    is_close = True
-                    break
+    # Detect overlapping points and apply jitter if needed
+    if apply_jitter:
+        import numpy as np
         
-        # Assign position based on model type to ensure consistency
-        if 'min_vol' in row['Model']:
-            positions.append('bottom center')
-            offset_y.append(-0.02)
-            offset_x.append(0)
-        elif 'max_sharpe' in row['Model']:
-            positions.append('top center')
-            offset_y.append(0.02)
-            offset_x.append(0)
-        elif 'rp_' in row['Model']:
-            positions.append('middle right')
-            offset_y.append(0)
-            offset_x.append(0.005)
-        else:
-            positions.append('top center')
-            offset_y.append(0)
-            offset_x.append(0)
+        # Find groups of overlapping points
+        overlap_threshold_x = 0.005  # 0.5% volatility
+        overlap_threshold_y = 0.02   # 2% return
+        
+        for i, row in plot_df.iterrows():
+            overlapping = []
+            for j, other in plot_df.iterrows():
+                if i != j:
+                    x_dist = abs(row['Volatility'] - other['Volatility'])
+                    y_dist = abs(row['Return'] - other['Return'])
+                    if x_dist < overlap_threshold_x and y_dist < overlap_threshold_y:
+                        overlapping.append(j)
+            
+            # If this point overlaps with others, apply jitter
+            if overlapping:
+                # Determine jitter direction based on model type for consistency
+                if 'min_vol' in row['Model']:
+                    plot_df.at[i, 'Volatility'] -= 0.003
+                    plot_df.at[i, 'Return'] -= 0.01
+                elif 'max_sharpe' in row['Model']:
+                    plot_df.at[i, 'Volatility'] += 0.003
+                    plot_df.at[i, 'Return'] += 0.01
+                elif 'historical' in row['Model']:
+                    plot_df.at[i, 'Volatility'] -= 0.002
+                else:
+                    plot_df.at[i, 'Volatility'] += 0.002
     
-    comparison_df_sorted['text_position'] = positions
-    comparison_df_sorted['y_offset'] = offset_y
-    comparison_df_sorted['x_offset'] = offset_x
+    # Sort for consistent rendering
+    plot_df = plot_df.sort_values(['Volatility', 'Return'])
     
-    fig_scatter = go.Figure()
+    # Use Plotly Express for cleaner implementation with better color handling
+    import plotly.express as px
     
-    # Add all points with hover info only (no text labels)
-    fig_scatter.add_trace(go.Scatter(
-        x=comparison_df_sorted['Volatility'],
-        y=comparison_df_sorted['Return'],
-        mode='markers',
-        marker=dict(
-            size=comparison_df_sorted['Sharpe_Ratio'] * 25 + 15,  # Minimum size of 15
-            color=comparison_df_sorted['Sharpe_Ratio'],
-            colorscale='Viridis',
-            showscale=True,
-            colorbar=dict(title="Sharpe<br>Ratio"),
-            line=dict(color='white', width=2)  # White border for clarity
+    # Define a professional color palette that matches across pages
+    color_map = {
+        'mv_historical_max_sharpe': '#e74c3c',  # Professional Red
+        'mv_historical_min_vol': '#3498db',     # Professional Blue
+        'mv_undervalue_max_sharpe': '#f39c12',  # Professional Orange
+        'mv_undervalue_min_vol': '#27ae60',     # Professional Green
+        'rp_historical': '#9b59b6',             # Professional Purple
+        'rp_undervalue': '#1abc9c'              # Professional Turquoise
+    }
+    
+    # Prepare data for px.scatter
+    plot_df['Size'] = plot_df['Sharpe_Ratio'] * 30 + 25  # Marker size based on Sharpe ratio
+    
+    # Store original values for hover
+    plot_df['Original_Return'] = comparison_df.set_index('Model').loc[plot_df['Model']]['Return'].values
+    plot_df['Original_Volatility'] = comparison_df.set_index('Model').loc[plot_df['Model']]['Volatility'].values
+    
+    # Check if any positions were jittered
+    plot_df['Jittered'] = (
+        (abs(plot_df['Volatility'] - plot_df['Original_Volatility']) > 0.001) | 
+        (abs(plot_df['Return'] - plot_df['Original_Return']) > 0.001)
+    )
+    
+    # Create scatter plot using px.scatter for reliable color handling
+    fig_scatter = px.scatter(
+        plot_df,
+        x='Volatility',
+        y='Return',
+        color='Model',
+        color_discrete_map=color_map,
+        size='Size',
+        hover_name='Display_Name',
+        text='Display_Name' if show_labels else None,
+        custom_data=['Sharpe_Ratio', 'Original_Return', 'Original_Volatility', 'Jittered']
+    )
+    
+    # Update hover template
+    fig_scatter.update_traces(
+        hovertemplate=(
+            '<b>%{hovertext}</b><br>' +
+            'Return: %{customdata[1]:.2%}<br>' +
+            'Volatility: %{customdata[2]:.2%}<br>' +
+            'Sharpe: %{customdata[0]:.2f}<br>' +
+            '%{customdata[3]|<i>Position slightly adjusted for visibility</i>|}<br>' +
+            '<extra></extra>'
         ),
-        text=comparison_df_sorted['Display_Name'],
-        hovertemplate="<b>%{text}</b><br>" +
-                     "Return: %{y:.2%}<br>" +
-                     "Volatility: %{x:.2%}<br>" +
-                     "Sharpe: %{marker.color:.2f}<extra></extra>",
-        showlegend=False
-    ))
+        marker=dict(
+            opacity=0.9,
+            line=dict(color='white', width=2.5)
+        ),
+        textposition='top center' if show_labels else None,
+        textfont=dict(size=10, color='#2c3e50') if show_labels else None
+    )
     
-    # Add text annotations separately with smart positioning
-    for idx, row in comparison_df_sorted.iterrows():
+    # Update trace names for legend
+    for i, trace in enumerate(fig_scatter.data):
+        if i < len(plot_df):
+            model = plot_df.iloc[i]['Model']
+            trace.name = model_labels.get(model, model)
+    
+    # If labels are hidden, add a note
+    if not show_labels:
         fig_scatter.add_annotation(
-            x=row['Volatility'] + row['x_offset'],
-            y=row['Return'] + row['y_offset'],
-            text=row['Display_Name'],
-            showarrow=True,
-            arrowhead=2,
-            arrowsize=1,
-            arrowwidth=1,
-            arrowcolor="gray",
-            ax=0,
-            ay=-30 if 'min_vol' in row['Model'] else 30,
-            font=dict(size=9, color="black"),
-            bgcolor="rgba(255, 255, 255, 0.8)",
-            bordercolor="gray",
-            borderwidth=1
+            text="Hover over points to see model names",
+            xref="paper", yref="paper",
+            x=0.5, y=1.05,
+            showarrow=False,
+            font=dict(size=10, color="gray")
         )
     
     fig_scatter.update_layout(
-        title="Portfolio Models: Risk vs Return Profile (All 6 Models)",
-        xaxis_title="Volatility (Risk) →",
-        yaxis_title="Expected Return ↑",
-        height=600,  # Increased height for better spacing
+        title=dict(
+            text="<b>Portfolio Models: Risk vs Return Profile</b>",
+            font=dict(size=18, color='#2c3e50'),
+            x=0.5,
+            xanchor='center'
+        ),
+        xaxis_title=dict(text="<b>Volatility (Risk) →</b>", font=dict(size=14, color='#2c3e50')),
+        yaxis_title=dict(text="<b>Expected Return ↑</b>", font=dict(size=14, color='#2c3e50')),
+        height=600,
         xaxis=dict(
             tickformat='.1%',
-            gridcolor='lightgray',
+            gridcolor='#ecf0f1',
             showgrid=True,
-            range=[comparison_df['Volatility'].min() * 0.95, comparison_df['Volatility'].max() * 1.05]
+            gridwidth=1,
+            showline=True,
+            linewidth=2,
+            linecolor='#bdc3c7',
+            tickfont=dict(size=11, color='#2c3e50'),
+            range=[comparison_df['Volatility'].min() * 0.95, 
+                   comparison_df['Volatility'].max() * 1.05]
         ),
         yaxis=dict(
             tickformat='.1%',
-            gridcolor='lightgray',
+            gridcolor='#ecf0f1',
             showgrid=True,
-            range=[comparison_df['Return'].min() * 0.95, comparison_df['Return'].max() * 1.05]
+            gridwidth=1,
+            showline=True,
+            linewidth=2,
+            linecolor='#bdc3c7',
+            tickfont=dict(size=11, color='#2c3e50'),
+            range=[comparison_df['Return'].min() * 0.95, 
+                   comparison_df['Return'].max() * 1.05]
         ),
         plot_bgcolor='white',
-        hovermode='closest'
+        paper_bgcolor='white',
+        hovermode='closest',
+        legend=dict(
+            title=dict(text='<b>Portfolio Models</b>', font=dict(size=13, color='#2c3e50')),
+            orientation="v",
+            yanchor="middle",
+            y=0.5,
+            xanchor="left",
+            x=1.02,
+            bgcolor="rgba(248, 249, 250, 0.9)",
+            bordercolor="#bdc3c7",
+            borderwidth=1,
+            font=dict(size=11, color='#2c3e50'),  # Fix: Set legend text color to dark gray
+            itemsizing='constant',
+            itemwidth=40
+        ),
+        margin=dict(l=70, r=180, t=70, b=70)
     )
     
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    st.plotly_chart(fig_scatter, use_container_width=True, theme=None)
     
     # Model Analysis - Are some models redundant?
     st.subheader("📊 Model Comparison Analysis")
@@ -1368,11 +1436,20 @@ def render_portfolio_optimization(data):
     with col2:
         st.markdown("### Key Differences")
         
-        # Calculate differences between similar models
-        hist_vs_under_sharpe = abs(comparison_df[comparison_df['Model'] == 'mv_historical_max_sharpe']['Return'].values[0] - 
-                                   comparison_df[comparison_df['Model'] == 'mv_undervalue_max_sharpe']['Return'].values[0])
-        hist_vs_under_minvol = abs(comparison_df[comparison_df['Model'] == 'mv_historical_min_vol']['Return'].values[0] - 
-                                   comparison_df[comparison_df['Model'] == 'mv_undervalue_min_vol']['Return'].values[0])
+        # Calculate differences between similar models with safety checks
+        try:
+            hist_sharpe_data = comparison_df[comparison_df['Model'] == 'mv_historical_max_sharpe']['Return'].values
+            under_sharpe_data = comparison_df[comparison_df['Model'] == 'mv_undervalue_max_sharpe']['Return'].values
+            hist_vs_under_sharpe = abs(hist_sharpe_data[0] - under_sharpe_data[0]) if len(hist_sharpe_data) > 0 and len(under_sharpe_data) > 0 else 0
+        except (IndexError, KeyError):
+            hist_vs_under_sharpe = 0
+            
+        try:
+            hist_minvol_data = comparison_df[comparison_df['Model'] == 'mv_historical_min_vol']['Return'].values
+            under_minvol_data = comparison_df[comparison_df['Model'] == 'mv_undervalue_min_vol']['Return'].values
+            hist_vs_under_minvol = abs(hist_minvol_data[0] - under_minvol_data[0]) if len(hist_minvol_data) > 0 and len(under_minvol_data) > 0 else 0
+        except (IndexError, KeyError):
+            hist_vs_under_minvol = 0
         
         st.info(f"""
         **Historical vs Undervalue Differences:**
@@ -1646,14 +1723,33 @@ def render_historical_tracking(data):
             # Combine all historical data
             combined_df = pd.concat(historical_data, ignore_index=True)
             
-            # Performance trend chart
+            # Performance trend chart with consistent colors
             if 'Return' in combined_df.columns:
+                # Use the same color mapping as Portfolio Optimization page
+                model_colors = {
+                    'mv_historical_max_sharpe': '#e74c3c',
+                    'mv_historical_min_vol': '#3498db',
+                    'mv_undervalue_max_sharpe': '#f39c12',
+                    'mv_undervalue_min_vol': '#27ae60',
+                    'rp_historical': '#9b59b6',
+                    'rp_undervalue': '#1abc9c'
+                }
+                
                 fig_trend = px.line(
                     combined_df,
                     x='Date',
                     y='Return',
                     color='Model',
-                    title="Model Return Trends Over Time"
+                    title="Model Return Trends Over Time",
+                    color_discrete_map=model_colors
+                )
+                fig_trend.update_layout(
+                    title_font=dict(size=18, color='#2c3e50'),
+                    xaxis_title_font=dict(size=14, color='#2c3e50'),
+                    yaxis_title_font=dict(size=14, color='#2c3e50'),
+                    legend_font=dict(size=11, color='#2c3e50'),
+                    plot_bgcolor='white',
+                    paper_bgcolor='white'
                 )
                 st.plotly_chart(fig_trend, use_container_width=True)
             

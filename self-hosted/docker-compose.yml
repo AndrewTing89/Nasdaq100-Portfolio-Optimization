@@ -75,7 +75,7 @@ services:
     environment:
       # Configuration from environment
       - DATA_DIR=/data
-      - USE_API_PIPELINE=${USE_API_PIPELINE:-true}  # Enable live data fetching
+      - USE_API_PIPELINE=true  # Always use FMP API for live data
       - FMP_API_KEY=${FMP_API_KEY:-USIa8HA0z2NCAdBwL1ZEHnpMaxe73DF8}
       - RISK_FREE_RATE=${RISK_FREE_RATE:-0.02}
       - MIN_WEIGHT_THRESHOLD=${MIN_WEIGHT_THRESHOLD:-0.01}
@@ -83,7 +83,7 @@ services:
       - RISK_AVERSION=${RISK_AVERSION:-2.5}
       - TAU=${TAU:-0.025}
       - HISTORICAL_PERIOD=${HISTORICAL_PERIOD:-5y}
-      - REQUEST_DELAY=${REQUEST_DELAY:-1.0}
+      - REQUEST_DELAY=${REQUEST_DELAY:-0.2}  # 5 calls/second for 300/min limit
       - MAX_RETRIES=${MAX_RETRIES:-3}
       # Database configuration
       - DATABASE_URL=postgresql://${POSTGRES_USER:-portfolio_user}:${POSTGRES_PASSWORD:-secure_password}@postgres:5432/${POSTGRES_DB:-portfolio_optimization}
