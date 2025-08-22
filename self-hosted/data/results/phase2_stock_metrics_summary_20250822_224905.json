@@ -1,0 +1,166 @@
+{
+  "total_stocks": 100,
+  "successfully_processed": 30,
+  "failed_stocks": 70,
+  "failed_stock_list": [
+    "ADBE",
+    "AMD",
+    "ABNB",
+    "GOOGL",
+    "GOOG",
+    "AMZN",
+    "AEP",
+    "AMGN",
+    "ADI",
+    "AAPL",
+    "AMAT",
+    "APP",
+    "ARM",
+    "ASML",
+    "AZN",
+    "TEAM",
+    "ADSK",
+    "ADP",
+    "AXON",
+    "BKR",
+    "BIIB",
+    "BKNG",
+    "AVGO",
+    "CDNS",
+    "CDW",
+    "CHTR",
+    "CTAS",
+    "CSCO",
+    "CCEP",
+    "CTSH",
+    "CMCSA",
+    "CEG",
+    "CPRT",
+    "CSGP",
+    "COST",
+    "CRWD",
+    "CSX",
+    "DDOG",
+    "DXCM",
+    "FANG",
+    "DASH",
+    "EA",
+    "EXC",
+    "FAST",
+    "FTNT",
+    "GEHC",
+    "GILD",
+    "GFS",
+    "HON",
+    "IDXX",
+    "INTC",
+    "INTU",
+    "ISRG",
+    "KDP",
+    "KLAC",
+    "KHC",
+    "LRCX",
+    "LIN",
+    "LULU",
+    "MAR",
+    "MRVL",
+    "MELI",
+    "META",
+    "MCHP",
+    "MU",
+    "MSFT",
+    "MSTR",
+    "MDLZ",
+    "MNST",
+    "NFLX"
+  ],
+  "timestamp": "20250822_224905",
+  "mean_annual_return": 0.20098180843894595,
+  "median_annual_return": 0.1511367516784357,
+  "mean_annual_volatility": 0.3854906341236124,
+  "median_annual_volatility": 0.33603749363241386,
+  "top_performers": [
+    {
+      "Symbol": "PLTR",
+      "Annual_Return_5Y": 0.831985846098489
+    },
+    {
+      "Symbol": "NVDA",
+      "Annual_Return_5Y": 0.667832044879233
+    },
+    {
+      "Symbol": "TSLA",
+      "Annual_Return_5Y": 0.3848299170934255
+    },
+    {
+      "Symbol": "PANW",
+      "Annual_Return_5Y": 0.37175469221104324
+    },
+    {
+      "Symbol": "PDD",
+      "Annual_Return_5Y": 0.3421450722730907
+    },
+    {
+      "Symbol": "ON",
+      "Annual_Return_5Y": 0.3126944431480066
+    },
+    {
+      "Symbol": "SHOP",
+      "Annual_Return_5Y": 0.2830514012394698
+    },
+    {
+      "Symbol": "TTD",
+      "Annual_Return_5Y": 0.2723814227584838
+    },
+    {
+      "Symbol": "SNPS",
+      "Annual_Return_5Y": 0.2721006032838621
+    },
+    {
+      "Symbol": "ORLY",
+      "Annual_Return_5Y": 0.2653867999685775
+    }
+  ],
+  "most_volatile": [
+    {
+      "Symbol": "PDD",
+      "Annual_Volatility_5Y": 0.7277773123108358
+    },
+    {
+      "Symbol": "PLTR",
+      "Annual_Volatility_5Y": 0.7228751705020426
+    },
+    {
+      "Symbol": "TTD",
+      "Annual_Volatility_5Y": 0.6974145363208422
+    },
+    {
+      "Symbol": "SHOP",
+      "Annual_Volatility_5Y": 0.6552531195666813
+    },
+    {
+      "Symbol": "TSLA",
+      "Annual_Volatility_5Y": 0.631008985371396
+    },
+    {
+      "Symbol": "WBD",
+      "Annual_Volatility_5Y": 0.5445557229565612
+    },
+    {
+      "Symbol": "NVDA",
+      "Annual_Volatility_5Y": 0.5270666584623265
+    },
+    {
+      "Symbol": "ON",
+      "Annual_Volatility_5Y": 0.5193852440629801
+    },
+    {
+      "Symbol": "PYPL",
+      "Annual_Volatility_5Y": 0.4240892005565455
+    },
+    {
+      "Symbol": "PANW",
+      "Annual_Volatility_5Y": 0.4089659079408316
+    }
+  ]
+}

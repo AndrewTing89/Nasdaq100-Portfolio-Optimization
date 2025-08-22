@@ -18,7 +18,7 @@ class FMPClient:
     
     def __init__(self, api_key: str = None):
         """
-        Initialize FMP client
+        Initialize FMP client with smart rate limiting
         
         Args:
             api_key: FMP API key (or set FMP_API_KEY environment variable)
@@ -26,56 +26,112 @@ class FMPClient:
         self.api_key = api_key or os.environ.get('FMP_API_KEY', 'USIa8HA0z2NCAdBwL1ZEHnpMaxe73DF8')
         self.base_url = "https://financialmodelingprep.com/api/v3"
         self.session = requests.Session()
-        self.rate_limit_delay = float(os.environ.get('REQUEST_DELAY', '0.2'))  # 0.2 seconds = 300 requests/minute
         
-    def _make_request(self, endpoint: str, params: Dict = None) -> Optional[Any]:
-        """Make API request with error handling"""
+        # Smart rate limiting
+        self.rate_limit = 295  # Conservative limit (300 - 5 buffer)
+        self.rate_limit_delay = 0.21  # Slightly conservative delay
+        self.calls_made = []  # Track timestamps of API calls
+        self.calls_by_endpoint = {}  # Track calls per endpoint for monitoring
+        
+    def _wait_if_needed(self):
+        """Smart rate limiting with sliding window"""
+        now = time.time()
+        # Remove calls older than 60 seconds
+        self.calls_made = [t for t in self.calls_made if now - t < 60]
+        
+        # If we're approaching the limit, wait
+        if len(self.calls_made) >= self.rate_limit:
+            sleep_time = 60 - (now - self.calls_made[0]) + 0.1  # Add small buffer
+            logging.info(f"Rate limit reached ({len(self.calls_made)} calls in last minute), sleeping {sleep_time:.1f}s")
+            time.sleep(sleep_time)
+            # Clear old calls after sleeping
+            self.calls_made = []
+        
+        # Always add minimum delay between calls
+        time.sleep(self.rate_limit_delay)
+        self.calls_made.append(now)
+    
+    def _make_request(self, endpoint: str, params: Dict = None, max_retries: int = 3) -> Optional[Any]:
+        """Make API request with smart rate limiting and retry logic"""
         if params is None:
             params = {}
         params['apikey'] = self.api_key
         
         url = f"{self.base_url}/{endpoint}"
         
-        try:
-            # Rate limiting
-            time.sleep(self.rate_limit_delay)
-            
-            response = self.session.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            # Check for API errors
-            if isinstance(data, dict) and 'Error Message' in data:
-                logging.error(f"FMP API error: {data['Error Message']}")
-                return None
+        for attempt in range(max_retries):
+            try:
+                # Apply rate limiting
+                self._wait_if_needed()
                 
-            return data
-            
-        except requests.exceptions.RequestException as e:
-            logging.error(f"FMP request failed for {endpoint}: {e}")
-            return None
+                # Track endpoint usage
+                self.calls_by_endpoint[endpoint] = self.calls_by_endpoint.get(endpoint, 0) + 1
+                
+                # Make request
+                start_time = time.time()
+                response = self.session.get(url, params=params, timeout=15)
+                response_time = (time.time() - start_time) * 1000  # ms
+                
+                # Log slow requests
+                if response_time > 5000:
+                    logging.warning(f"Slow FMP request: {endpoint} took {response_time:.0f}ms")
+                
+                response.raise_for_status()
+                data = response.json()
+                
+                # Check for API errors
+                if isinstance(data, dict) and 'Error Message' in data:
+                    logging.error(f"FMP API error: {data['Error Message']}")
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # Exponential backoff
+                        logging.info(f"Retrying after {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
+                    return None
+                    
+                return data
+                
+            except requests.exceptions.Timeout:
+                logging.warning(f"Timeout on attempt {attempt + 1} for {endpoint}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                    
+            except requests.exceptions.RequestException as e:
+                logging.error(f"FMP request failed for {endpoint}: {e}")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    logging.info(f"Retrying after {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                return None
+        
+        logging.error(f"Failed to fetch {endpoint} after {max_retries} attempts")
+        return None
     
     def get_nasdaq100_constituents(self) -> pd.DataFrame:
-        """Get NASDAQ-100 constituent list"""
-        # FMP endpoint for NASDAQ-100 constituents
-        endpoint = "index/constituents"
-        params = {"symbol": "^NDX"}  # NASDAQ-100 index
+        """Get NASDAQ-100 constituent list from FMP"""
+        # Use the correct FMP endpoint for NASDAQ-100
+        endpoint = "nasdaq_constituent"
         
-        data = self._make_request(endpoint, params)
+        logging.info("Fetching NASDAQ-100 constituents from FMP...")
+        data = self._make_request(endpoint)
         
         if not data:
-            # Fallback to S&P 500 if NASDAQ-100 not available
-            logging.warning("NASDAQ-100 constituents not available, using tech stocks from S&P 500")
-            params = {"symbol": "^GSPC"}
+            # Fallback to trying other endpoints
+            logging.warning("nasdaq_constituent endpoint failed, trying index endpoint")
+            endpoint = "index/constituents"
+            params = {"symbol": "^NDX"}
             data = self._make_request(endpoint, params)
         
         if data:
             df = pd.DataFrame(data)
-            # Filter for tech/growth stocks if using S&P 500
-            if 'sector' in df.columns:
-                tech_sectors = ['Technology', 'Communication Services', 'Consumer Discretionary']
-                df = df[df['sector'].isin(tech_sectors)].head(100)
+            logging.info(f"Successfully fetched {len(df)} NASDAQ-100 constituents")
+            # Ensure we have the required columns
+            if 'symbol' not in df.columns and 'Symbol' in df.columns:
+                df['symbol'] = df['Symbol']
+            if 'name' not in df.columns and 'Name' in df.columns:
+                df['name'] = df['Name']
             return df
         
         # Ultimate fallback - hardcoded top NASDAQ stocks
@@ -247,7 +303,48 @@ class FMPClient:
         return result
     
     def get_analyst_estimates(self, symbol: str) -> Optional[Dict]:
-        """Get analyst price targets and estimates"""
+        """Get analyst price targets and estimates using v4 API for better data"""
+        # Try v4 consensus endpoint first (has aggregated data)
+        v4_base = "https://financialmodelingprep.com/api/v4"
+        consensus_url = f"{v4_base}/price-target-consensus?symbol={symbol}&apikey={self.api_key}"
+        
+        consensus_data = None
+        analyst_count = 0
+        
+        try:
+            response = self.session.get(consensus_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    consensus_data = data[0]
+        except Exception as e:
+            logging.warning(f"V4 consensus API failed for {symbol}: {e}")
+        
+        # Get individual analyst reports for count
+        target_url = f"{v4_base}/price-target?symbol={symbol}&apikey={self.api_key}"
+        try:
+            response = self.session.get(target_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, list):
+                    analyst_count = len(data)
+        except Exception as e:
+            logging.warning(f"V4 price-target API failed for {symbol}: {e}")
+        
+        # If we have v4 data, use it
+        if consensus_data:
+            result = {
+                'targetMeanPrice': consensus_data.get('targetConsensus'),
+                'targetHighPrice': consensus_data.get('targetHigh'),
+                'targetLowPrice': consensus_data.get('targetLow'),
+                'targetMedianPrice': consensus_data.get('targetMedian'),
+                'numberOfAnalystOpinions': analyst_count if analyst_count > 0 else 1,
+                'targetDispersion': (consensus_data.get('targetHigh', 0) - consensus_data.get('targetLow', 0)) / consensus_data.get('targetConsensus', 1) if consensus_data.get('targetConsensus') else 0
+            }
+            # Filter out None values
+            return {k: v for k, v in result.items() if v is not None}
+        
+        # Fallback to v3 endpoint
         endpoint = f"analyst-price-target/{symbol}"
         data = self._make_request(endpoint)
         
@@ -262,7 +359,7 @@ class FMPClient:
                     'numberOfAnalystOpinions': len(targets)
                 }
         
-        # Fallback to DCF valuation
+        # Final fallback to DCF valuation
         dcf_endpoint = f"discounted-cash-flow/{symbol}"
         dcf_data = self._make_request(dcf_endpoint)
         if dcf_data and len(dcf_data) > 0:
@@ -330,6 +427,18 @@ class FMPClient:
         if factors > 0:
             return score / factors
         return 0.0
+    
+    def get_api_usage_stats(self) -> Dict:
+        """Get statistics about API usage"""
+        now = time.time()
+        recent_calls = [t for t in self.calls_made if now - t < 60]
+        
+        return {
+            'calls_last_minute': len(recent_calls),
+            'calls_remaining': max(0, self.rate_limit - len(recent_calls)),
+            'calls_by_endpoint': dict(self.calls_by_endpoint),
+            'total_calls': sum(self.calls_by_endpoint.values())
+        }
 
 
 # Example usage

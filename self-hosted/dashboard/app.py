@@ -20,6 +20,8 @@ import logging
 import requests
 import time
 import hashlib
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Import technical analysis module
 try:
@@ -108,6 +110,236 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+
+class DatabaseLoader:
+    """Handle data loading from PostgreSQL database"""
+    
+    def __init__(self, base_path: str = None):
+        # Keep base_path for compatibility but use database
+        self.base_path = Path(base_path) if base_path else Path("/data")
+        self.data_dir = self.base_path
+        self.results_dir = self.base_path / "results"
+        
+        # Database connection
+        self.db_url = os.environ.get(
+            'DATABASE_URL',
+            'postgresql://portfolio_user:secure_password@postgres:5432/portfolio_optimization'
+        )
+        
+    def get_connection(self):
+        """Get database connection"""
+        return psycopg2.connect(self.db_url)
+    
+    @st.cache_data(ttl=300)  # Cache for 5 minutes
+    def load_csv(_self, relative_path: str) -> Optional[pd.DataFrame]:
+        """Load data from database based on the requested path"""
+        try:
+            # Map file paths to database queries
+            if "nasdaq_100_analysis.csv" in relative_path:
+                # Load stocks data
+                with _self.get_connection() as conn:
+                    query = """
+                        SELECT 
+                            s.company_name as "Company",
+                            s.symbol as "Symbol",
+                            sm.previous_close as "Previous Close",
+                            sm.target_estimate_1y as "1y Target Est",
+                            sm.undervalue_rate as "Undervalue Rate",
+                            0 as "Analyst_Count"
+                        FROM stocks s
+                        LEFT JOIN stock_metrics sm ON s.id = sm.stock_id
+                        WHERE s.is_active = true
+                        ORDER BY s.symbol
+                    """
+                    df = pd.read_sql(query, conn)
+                    return df if not df.empty else None
+                    
+            elif "nasdaq_100_with_returns.csv" in relative_path:
+                # Load stocks with returns data
+                with _self.get_connection() as conn:
+                    query = """
+                        SELECT 
+                            s.company_name as "Company",
+                            s.symbol as "Symbol",
+                            sm.previous_close as "Previous Close",
+                            sm.target_estimate_1y as "1y Target Est",
+                            sm.undervalue_rate as "Undervalue Rate",
+                            0 as "Analyst_Count",
+                            sm.annual_return_5y as "Annual_Return_5Y",
+                            sm.annual_volatility_5y as "Annual_Volatility_5Y"
+                        FROM stocks s
+                        LEFT JOIN stock_metrics sm ON s.id = sm.stock_id
+                        WHERE s.is_active = true
+                        ORDER BY s.symbol
+                    """
+                    df = pd.read_sql(query, conn)
+                    return df if not df.empty else None
+                    
+            elif "portfolio_performance_comparison" in relative_path:
+                # Load portfolio comparison
+                with _self.get_connection() as conn:
+                    query = """
+                        SELECT 
+                            pm.model_name as "Model",
+                            pp.total_return as "Return",
+                            pp.volatility as "Volatility",
+                            pp.sharpe_ratio as "Sharpe_Ratio"
+                        FROM portfolio_performance pp
+                        JOIN portfolio_models pm ON pp.portfolio_model_id = pm.id
+                        WHERE pp.pipeline_run_id = (
+                            SELECT id FROM pipeline_runs 
+                            WHERE status = 'completed' 
+                            ORDER BY completed_at DESC 
+                            LIMIT 1
+                        )
+                        ORDER BY pp.sharpe_ratio DESC
+                    """
+                    df = pd.read_sql(query, conn)
+                    return df if not df.empty else None
+                    
+            # For portfolio files, extract model name and load allocations
+            elif any(model in relative_path for model in ['mv_', 'rp_', 'bl_']):
+                # Extract model name from path
+                for model_type in ['mv_historical_max_sharpe', 'mv_historical_min_vol', 
+                                  'mv_undervalue_max_sharpe', 'mv_undervalue_min_vol',
+                                  'rp_historical', 'rp_undervalue', 
+                                  'bl_historical', 'bl_undervalue']:
+                    if model_type in relative_path:
+                        with _self.get_connection() as conn:
+                            query = """
+                                SELECT 
+                                    s.symbol as "Symbol",
+                                    s.company_name as "Company",
+                                    pc.weight as "Weight",
+                                    sm.annual_return_5y as "Annual_Return_5Y",
+                                    sm.annual_volatility_5y as "Annual_Volatility_5Y"
+                                FROM portfolio_compositions pc
+                                JOIN stocks s ON pc.stock_id = s.id
+                                JOIN portfolio_models pm ON pc.portfolio_model_id = pm.id
+                                LEFT JOIN stock_metrics sm ON s.id = sm.stock_id
+                                WHERE pm.model_name = %s
+                                AND pc.pipeline_run_id = (
+                                    SELECT id FROM pipeline_runs 
+                                    WHERE status = 'completed' 
+                                    ORDER BY completed_at DESC 
+                                    LIMIT 1
+                                )
+                                AND pc.weight > 0.001
+                                ORDER BY pc.weight DESC
+                            """
+                            df = pd.read_sql(query, conn, params=(model_type,))
+                            return df if not df.empty else None
+            
+            # Fallback to empty dataframe
+            return None
+            
+        except Exception as e:
+            logging.error(f"Database query failed: {e}")
+            return None
+    
+    @st.cache_data(ttl=300)
+    def load_json(_self, relative_path: str) -> Optional[Dict]:
+        """Load JSON data - map to database queries"""
+        try:
+            # Map JSON files to database data
+            if "phase1" in relative_path:
+                with _self.get_connection() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("""
+                            SELECT 
+                                'success' as status,
+                                COUNT(*) as stocks_analyzed,
+                                NOW() as timestamp
+                            FROM stocks 
+                            WHERE is_active = true
+                        """)
+                        return dict(cur.fetchone())
+                        
+            elif "phase2" in relative_path:
+                with _self.get_connection() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("""
+                            SELECT 
+                                'success' as status,
+                                COUNT(*) as stocks_with_metrics,
+                                NOW() as timestamp
+                            FROM stock_metrics
+                        """)
+                        return dict(cur.fetchone())
+                        
+            elif "phase3" in relative_path or "optimization" in relative_path:
+                with _self.get_connection() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("""
+                            SELECT 
+                                'success' as status,
+                                COUNT(DISTINCT portfolio_model_id) as models_optimized,
+                                NOW() as timestamp
+                            FROM portfolio_performance
+                        """)
+                        return dict(cur.fetchone())
+            
+            return None
+            
+        except Exception as e:
+            logging.error(f"Database query failed: {e}")
+            return None
+    
+    def list_files(self, relative_path: str) -> List[str]:
+        """List available data - return mock file list for compatibility"""
+        # Return a list of "files" that represent available data
+        files = []
+        
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Check if we have portfolio data
+                    cur.execute("""
+                        SELECT DISTINCT pm.model_name 
+                        FROM portfolio_performance pp
+                        JOIN portfolio_models pm ON pp.portfolio_model_id = pm.id
+                    """)
+                    models = cur.fetchall()
+                    
+                    # Add mock files for each model
+                    for model in models:
+                        model_name = model[0]
+                        files.append(f"results/{model_name}_significant.csv")
+                        files.append(f"results/{model_name}_portfolio.csv")
+                    
+                    # Add comparison file
+                    if models:
+                        files.append("results/portfolio_performance_comparison.csv")
+                    
+                    # Add phase files
+                    files.append("results/phase1_nasdaq_analysis_summary.json")
+                    files.append("results/phase2_stock_metrics_summary.json")
+                    files.append("results/phase3_optimization_summary.json")
+                    
+        except Exception as e:
+            logging.error(f"Database query failed: {e}")
+            
+        return files
+    
+    def get_file_timestamp(self, relative_path: str) -> Optional[datetime]:
+        """Get the last modified timestamp"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT MAX(completed_at) 
+                        FROM pipeline_runs 
+                        WHERE status = 'completed'
+                    """)
+                    result = cur.fetchone()
+                    return result[0] if result else None
+        except:
+            return None
+    
+    def get_directory_size(self, relative_path: str) -> int:
+        """Get directory size - return mock value"""
+        return 1024 * 1024  # 1MB mock size
 
 
 class LocalDataLoader:
@@ -589,7 +821,8 @@ def initialize_session_state():
     if 'base_path' not in st.session_state:
         st.session_state.base_path = "/data"  # Default Docker mount point
     if 'data_loader' not in st.session_state:
-        st.session_state.data_loader = LocalDataLoader(st.session_state.base_path)
+        # Use DatabaseLoader to read from PostgreSQL
+        st.session_state.data_loader = DatabaseLoader(st.session_state.base_path)
 
 
 def load_latest_data():
@@ -600,74 +833,118 @@ def load_latest_data():
     nasdaq_data = data_loader.load_csv("processed/nasdaq_100_analysis.csv")
     stock_data = data_loader.load_csv("processed/nasdaq_100_with_returns.csv")
     
-    # Load portfolio optimization results from results/
-    results_files = data_loader.list_files("results/")
+    # Load portfolio optimization results from database
     portfolio_data = {}
-    comparison_data = []
     
-    if results_files:
-        # Define portfolio patterns to match your local structure
-        # Updated with short descriptions for dropdown
-        portfolio_patterns = {
-            'mv_historical_max_sharpe_significant': 'MV Historical Max Sharpe - Best Risk-Adjusted Returns',
-            'mv_historical_min_vol_significant': 'MV Historical Min Vol - Smoothest Ride',
-            'mv_undervalue_max_sharpe_significant': 'MV Undervalue Max Sharpe - Best Analyst Picks',
-            'mv_undervalue_min_vol_significant': 'MV Undervalue Min Vol - Safe Bets',
-            'rp_historical_significant': 'Risk Parity Historical - Equal Risk Distribution',
-            'rp_undervalue_significant': 'Risk Parity Undervalue - Balanced Future Potential'
-        }
+    # Get portfolio comparison data from database
+    with data_loader.get_connection() as conn:
+        # Get portfolio performance comparison
+        comparison_query = """
+            SELECT 
+                pm.model_name as "Model",
+                pp.total_return as "Return",
+                pp.volatility as "Volatility",
+                pp.sharpe_ratio as "Sharpe_Ratio",
+                pp.stocks_selected as "Stocks_Selected"
+            FROM portfolio_performance pp
+            JOIN portfolio_models pm ON pp.portfolio_model_id = pm.id
+            WHERE pp.pipeline_run_id = (
+                SELECT id FROM pipeline_runs 
+                WHERE status = 'completed' 
+                ORDER BY completed_at DESC 
+                LIMIT 1
+            )
+            ORDER BY pp.sharpe_ratio DESC
+        """
+        comparison_df = pd.read_sql(comparison_query, conn)
         
-        for pattern, display_name in portfolio_patterns.items():
-            matching_files = [f for f in results_files if pattern in f and f.endswith('.csv')]
-            if matching_files:
-                # Get latest file for this pattern
-                latest_file = sorted(matching_files)[-1]
-                df = data_loader.load_csv(latest_file)
-                if df is not None and len(df) > 0:
-                    portfolio_data[display_name] = df
-                    
-                    # Calculate portfolio metrics for comparison
-                    if 'Annual_Return_5Y' in df.columns and 'Annual_Volatility_5Y' in df.columns and 'Weight' in df.columns:
-                        portfolio_return = (df['Weight'] * df['Annual_Return_5Y']).sum()
-                        # Simplified portfolio volatility calculation
-                        portfolio_volatility = np.sqrt((df['Weight']**2 * df['Annual_Volatility_5Y']**2).sum())
-                        sharpe_ratio = (portfolio_return - 0.02) / portfolio_volatility if portfolio_volatility > 0 else 0
-                        
-                        comparison_data.append({
-                            'Model': display_name,
-                            'Return': portfolio_return,
-                            'Volatility': portfolio_volatility,
-                            'Sharpe_Ratio': sharpe_ratio
-                        })
-        
-        # Create comparison dataframe if we have data
-        if comparison_data:
-            portfolio_data['comparison'] = pd.DataFrame(comparison_data)
+        if not comparison_df.empty:
+            portfolio_data['comparison'] = comparison_df
+            
+            # Get all portfolio models from latest run
+            models_query = """
+                SELECT DISTINCT pm.id, pm.model_name, pm.optimization_method
+                FROM portfolio_performance pp
+                JOIN portfolio_models pm ON pp.portfolio_model_id = pm.id
+                WHERE pp.pipeline_run_id = (
+                    SELECT id FROM pipeline_runs 
+                    WHERE status = 'completed' 
+                    ORDER BY completed_at DESC 
+                    LIMIT 1
+                )
+            """
+            models_df = pd.read_sql(models_query, conn)
+            
+            # For each model, get its allocations
+            for _, model in models_df.iterrows():
+                model_name = model['model_name']
+                model_id = model['id']
+                
+                # Get portfolio allocations
+                alloc_query = """
+                    SELECT 
+                        s.symbol as "Symbol",
+                        s.company_name as "Company",
+                        pc.weight as "Weight",
+                        COALESCE(sm.annual_return_5y, pc.expected_return) as "Annual_Return_5Y",
+                        COALESCE(sm.annual_volatility_5y, 0.2) as "Annual_Volatility_5Y",
+                        pc.expected_return as "Expected_Return",
+                        pc.risk_contribution as "Risk_Contribution"
+                    FROM portfolio_compositions pc
+                    JOIN stocks s ON pc.stock_id = s.id
+                    LEFT JOIN stock_metrics sm ON s.id = sm.stock_id AND sm.date = CURRENT_DATE
+                    WHERE pc.portfolio_model_id = %s
+                    AND pc.pipeline_run_id = (
+                        SELECT id FROM pipeline_runs 
+                        WHERE status = 'completed' 
+                        ORDER BY completed_at DESC 
+                        LIMIT 1
+                    )
+                    AND pc.weight > 0.001
+                    ORDER BY pc.weight DESC
+                """
+                allocations_df = pd.read_sql(alloc_query, conn, params=(model_id,))
+                
+                if not allocations_df.empty:
+                    # Use a display name that matches what the UI expects
+                    display_name = f"{model_name} - {model['optimization_method']}"
+                    portfolio_data[display_name] = allocations_df
     
-    if not portfolio_data:
+    if not portfolio_data or 'comparison' not in portfolio_data:
         portfolio_data = None
     
-    # Find latest summaries (JSON files)
-    summary_files = [f for f in results_files if f.endswith('.json')]
-    
+    # Load summaries from database
     phase1_summary = None
     phase2_summary = None
     phase3_summary = None
     
-    # Look for specific summary files
-    for file in summary_files:
-        if 'nasdaq_analysis_summary' in file:
-            summary = data_loader.load_json(file)
-            if summary:
-                phase1_summary = summary
-        elif 'stock_metrics_summary' in file:
-            summary = data_loader.load_json(file)
-            if summary:
-                phase2_summary = summary
-        elif 'portfolio_optimization' in file:
-            summary = data_loader.load_json(file)
-            if summary:
-                phase3_summary = summary
+    # Get pipeline run summaries from database
+    with data_loader.get_connection() as conn:
+        # Get latest pipeline run info
+        run_query = """
+            SELECT id, phase1_summary, phase2_summary, stocks_processed
+            FROM pipeline_runs
+            WHERE status = 'completed'
+            ORDER BY completed_at DESC
+            LIMIT 1
+        """
+        with conn.cursor() as cur:
+            cur.execute(run_query)
+            result = cur.fetchone()
+            if result:
+                # Create summary objects from database
+                phase1_summary = {
+                    'total_stocks': result[3] if result[3] else 0,
+                    'stocks_processed': result[3] if result[3] else 0
+                }
+                phase2_summary = {
+                    'total_stocks': result[3] if result[3] else 0,
+                    'metrics_calculated': result[3] if result[3] else 0
+                }
+                # Phase 3 summary from portfolio performance
+                phase3_summary = {
+                    'portfolios_created': len(portfolio_data) - 1 if portfolio_data else 0  # -1 for comparison
+                }
     
     # Calculate benchmark metrics if we have the required data
     benchmark_metrics = None
@@ -1653,24 +1930,26 @@ def render_historical_tracking(data):
     st.subheader("🔄 Pipeline Execution History")
     st.caption("Track pipeline reliability and performance over time from local execution logs.")
     
-    # Get historical results from local files
-    results_files = data_loader.list_files("results/")
-    
-    if results_files:
-        execution_data = []
-        for file in results_files:
-            file_timestamp = data_loader.get_file_timestamp(file)
-            if file_timestamp:
-                execution_data.append({
-                    'Date': file_timestamp,
-                    'File': file,
-                    'Type': 'Portfolio Result' if file.endswith('.csv') else 'Summary Report',
-                    'Status': 'Completed'
-                })
+    # Get historical pipeline runs from database
+    with data_loader.get_connection() as conn:
+        history_query = """
+            SELECT 
+                pr.started_at as "Date",
+                pr.run_type as "Type",
+                pr.status as "Status",
+                pr.phase as "Phase",
+                pr.stocks_processed as "Stocks",
+                COUNT(DISTINCT pp.id) as "Portfolios"
+            FROM pipeline_runs pr
+            LEFT JOIN portfolio_performance pp ON pr.id = pp.pipeline_run_id
+            GROUP BY pr.id, pr.started_at, pr.run_type, pr.status, pr.phase, pr.stocks_processed
+            ORDER BY pr.started_at DESC
+        """
+        execution_history = pd.read_sql(history_query, conn)
         
-        if execution_data:
-            execution_history = pd.DataFrame(execution_data)
-            execution_history = execution_history.sort_values('Date', ascending=False)
+        if not execution_history.empty:
+            # Convert Date column to datetime
+            execution_history['Date'] = pd.to_datetime(execution_history['Date'])
             
             # Metrics
             col1, col2, col3 = st.columns(3)
@@ -1682,22 +1961,42 @@ def render_historical_tracking(data):
                     last_run = execution_history['Date'].max().strftime('%Y-%m-%d %H:%M')
                     st.metric("Last Execution", last_run)
             with col3:
-                recent_files = len(execution_history[execution_history['Date'] > datetime.now() - timedelta(days=7)])
-                st.metric("Recent Files (7 days)", recent_files)
+                # Fix datetime comparison - convert to timezone-naive for comparison
+                seven_days_ago = pd.Timestamp.now() - pd.Timedelta(days=7)
+                if not execution_history.empty:
+                    # Ensure Date column is timezone-naive for comparison
+                    execution_history['Date'] = pd.to_datetime(execution_history['Date']).dt.tz_localize(None)
+                    recent_files = len(execution_history[execution_history['Date'] > seven_days_ago])
+                else:
+                    recent_files = 0
+                st.metric("Recent Runs (7 days)", recent_files)
             
             # Recent executions table
-            st.subheader("📋 Recent Files")
+            st.subheader("📋 Recent Pipeline Runs")
             recent_executions = execution_history.head(20).copy()
             recent_executions['Date'] = recent_executions['Date'].dt.strftime('%Y-%m-%d %H:%M:%S')
             
+            # Add status coloring
+            def highlight_status(row):
+                if row['Status'] == 'completed':
+                    return ['background-color: #d4edda'] * len(row)
+                elif row['Status'] == 'failed':
+                    return ['background-color: #f8d7da'] * len(row)
+                elif row['Status'] == 'running':
+                    return ['background-color: #fff3cd'] * len(row)
+                return [''] * len(row)
+            
+            styled_df = recent_executions[['Date', 'Type', 'Status', 'Phase', 'Stocks', 'Portfolios']].style.apply(
+                highlight_status, axis=1
+            )
+            
             st.dataframe(
-                recent_executions[['Date', 'Type', 'File']],
-                use_container_width=True
+                styled_df,
+                use_container_width=True,
+                hide_index=True
             )
         else:
-            st.info("No execution history found yet.")
-    else:
-        st.info("No results files found. Run the pipeline first to see execution history.")
+            st.info("No pipeline runs found yet. Run the pipeline first to see execution history.")
     
     # Model performance over time
     st.subheader("📊 Model Performance Trends")

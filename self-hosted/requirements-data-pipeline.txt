@@ -10,6 +10,9 @@ numpy==1.25.2
 # Financial data fetching
 # Removed yfinance - using FMP API instead
 
+# Database connectivity
+psycopg2-binary==2.9.9
+
 # Web scraping
 requests==2.31.0
 beautifulsoup4==4.12.2

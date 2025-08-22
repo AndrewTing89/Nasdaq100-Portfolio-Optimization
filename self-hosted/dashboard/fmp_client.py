@@ -247,7 +247,48 @@ class FMPClient:
         return result
     
     def get_analyst_estimates(self, symbol: str) -> Optional[Dict]:
-        """Get analyst price targets and estimates"""
+        """Get analyst price targets and estimates using v4 API for better data"""
+        # Try v4 consensus endpoint first (has aggregated data)
+        v4_base = "https://financialmodelingprep.com/api/v4"
+        consensus_url = f"{v4_base}/price-target-consensus?symbol={symbol}&apikey={self.api_key}"
+        
+        consensus_data = None
+        analyst_count = 0
+        
+        try:
+            response = self.session.get(consensus_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    consensus_data = data[0]
+        except Exception as e:
+            logging.warning(f"V4 consensus API failed for {symbol}: {e}")
+        
+        # Get individual analyst reports for count
+        target_url = f"{v4_base}/price-target?symbol={symbol}&apikey={self.api_key}"
+        try:
+            response = self.session.get(target_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, list):
+                    analyst_count = len(data)
+        except Exception as e:
+            logging.warning(f"V4 price-target API failed for {symbol}: {e}")
+        
+        # If we have v4 data, use it
+        if consensus_data:
+            result = {
+                'targetMeanPrice': consensus_data.get('targetConsensus'),
+                'targetHighPrice': consensus_data.get('targetHigh'),
+                'targetLowPrice': consensus_data.get('targetLow'),
+                'targetMedianPrice': consensus_data.get('targetMedian'),
+                'numberOfAnalystOpinions': analyst_count if analyst_count > 0 else 1,
+                'targetDispersion': (consensus_data.get('targetHigh', 0) - consensus_data.get('targetLow', 0)) / consensus_data.get('targetConsensus', 1) if consensus_data.get('targetConsensus') else 0
+            }
+            # Filter out None values
+            return {k: v for k, v in result.items() if v is not None}
+        
+        # Fallback to v3 endpoint
         endpoint = f"analyst-price-target/{symbol}"
         data = self._make_request(endpoint)
         
@@ -262,7 +303,7 @@ class FMPClient:
                     'numberOfAnalystOpinions': len(targets)
                 }
         
-        # Fallback to DCF valuation
+        # Final fallback to DCF valuation
         dcf_endpoint = f"discounted-cash-flow/{symbol}"
         dcf_data = self._make_request(dcf_endpoint)
         if dcf_data and len(dcf_data) > 0:

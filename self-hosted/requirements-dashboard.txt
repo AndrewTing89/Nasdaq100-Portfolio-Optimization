@@ -26,6 +26,9 @@ streamlit-aggrid==0.3.4.post3
 # API communication
 requests==2.31.0
 
+# Database connectivity
+psycopg2-binary==2.9.9
+
 # Date and time handling
 python-dateutil==2.8.2
 pytz==2023.3

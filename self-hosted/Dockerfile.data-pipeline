@@ -38,6 +38,9 @@ COPY src/fmp_client.py .
 COPY src/pipeline_wrapper.py .
 COPY src/health_api.py .
 COPY src/data_cleanup.py .
+COPY src/db_only_pipeline.py .
+COPY src/database.py .
+COPY src/database_pipeline.py .
 
 # Set proper permissions for data directory
 RUN chmod -R 777 /data

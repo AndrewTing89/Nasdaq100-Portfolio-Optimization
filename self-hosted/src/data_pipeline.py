@@ -18,7 +18,7 @@ import argparse
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple, Optional, Union
 import fcntl
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -274,25 +274,38 @@ class NasdaqAnalyzer:
             # Get previous close price
             prev_close = info.get('previousClose') or info.get('regularMarketPreviousClose')
             
-            # Get analyst target price
+            # Get analyst target price and count
             target_est = info.get('targetMeanPrice')
+            analyst_count = info.get('numberOfAnalystOpinions', 0)
             
             if prev_close is not None:
                 prev_close = float(prev_close)
             if target_est is not None:
                 target_est = float(target_est)
             
-            logging.debug(f"Data for {ticker} - Previous Close: {prev_close}, Target: {target_est}")
-            return prev_close, target_est
+            # Return estimates dict with analyst count
+            estimates_data = {
+                'targetMeanPrice': target_est,
+                'numberOfAnalystOpinions': analyst_count
+            }
+            
+            logging.debug(f"Data for {ticker} - Previous Close: {prev_close}, Target: {target_est}, Analysts: {analyst_count}")
+            return prev_close, estimates_data
             
         except Exception as e:
             logging.error(f"Error retrieving data for {ticker}: {e}")
             return None, None
     
-    def calculate_undervalue_rate(self, target_est: Optional[float], prev_close: Optional[float]) -> Optional[float]:
+    def calculate_undervalue_rate(self, target_est: Optional[Union[float, Dict]], prev_close: Optional[float]) -> Optional[float]:
         """Calculate undervaluation rate"""
-        if target_est is not None and prev_close is not None and prev_close != 0:
-            return (target_est / prev_close) - 1
+        # Handle dict or float
+        if isinstance(target_est, dict):
+            target_price = target_est.get('targetMeanPrice')
+        else:
+            target_price = target_est
+            
+        if target_price is not None and prev_close is not None and prev_close != 0:
+            return (target_price / prev_close) - 1
         return None
     
     def analyze_nasdaq_components(self) -> Dict[str, Any]:
@@ -325,12 +338,29 @@ class NasdaqAnalyzer:
             
             undervalue_rate = self.calculate_undervalue_rate(target_est, prev_close)
             
+            # Get analyst count from estimates if available
+            analyst_count = 0
+            if isinstance(target_est, dict):
+                analyst_count = target_est.get('numberOfAnalystOpinions', 0)
+                target_price = target_est.get('targetMeanPrice')
+            else:
+                target_price = target_est
+                # Re-fetch to get analyst count
+                try:
+                    fmp_client = FMPClient()
+                    estimates = fmp_client.get_analyst_estimates(symbol)
+                    if estimates:
+                        analyst_count = estimates.get('numberOfAnalystOpinions', 0)
+                except:
+                    pass
+            
             return {
                 "Company": company,
                 "Symbol": symbol,
                 "Previous Close": prev_close,
-                "1y Target Est": target_est,
-                "Undervalue Rate": undervalue_rate
+                "1y Target Est": target_price if isinstance(target_est, dict) else target_est,
+                "Undervalue Rate": undervalue_rate,
+                "Analyst_Count": analyst_count
             }
         
         # Use ThreadPoolExecutor for parallel processing (10 workers for faster processing)
@@ -765,29 +795,47 @@ class PortfolioOptimizer:
     
     def black_litterman(self, market_weights: np.ndarray, cov_matrix: np.ndarray, 
                        P: np.ndarray, Q: np.ndarray, Omega: np.ndarray) -> np.ndarray:
-        """Black-Litterman model implementation"""
-        # Calculate implied returns
-        implied_returns = self.config.risk_aversion * np.dot(cov_matrix, market_weights)
+        """Black-Litterman model implementation with regularization"""
+        # Add small regularization to avoid singular matrix
+        epsilon = 1e-8
+        cov_matrix_reg = cov_matrix + epsilon * np.eye(len(cov_matrix))
         
-        # Apply Black-Litterman formula
-        precision_prior = np.linalg.inv(self.config.tau * cov_matrix)
-        precision_views = np.dot(P.T, np.dot(np.linalg.inv(Omega), P))
+        # Calculate implied returns
+        implied_returns = self.config.risk_aversion * np.dot(cov_matrix_reg, market_weights)
+        
+        # Apply Black-Litterman formula with regularized matrices
+        try:
+            precision_prior = np.linalg.inv(self.config.tau * cov_matrix_reg)
+        except np.linalg.LinAlgError:
+            # If still singular, use pseudoinverse
+            precision_prior = np.linalg.pinv(self.config.tau * cov_matrix_reg)
+        
+        try:
+            omega_inv = np.linalg.inv(Omega + epsilon * np.eye(len(Omega)))
+        except np.linalg.LinAlgError:
+            omega_inv = np.linalg.pinv(Omega + epsilon * np.eye(len(Omega)))
+        
+        precision_views = np.dot(P.T, np.dot(omega_inv, P))
         precision_posterior = precision_prior + precision_views
         
         mean_prior = np.dot(precision_prior, implied_returns)
-        mean_views = np.dot(P.T, np.dot(np.linalg.inv(Omega), Q))
+        mean_views = np.dot(P.T, np.dot(omega_inv, Q))
         
-        posterior_returns = np.dot(np.linalg.inv(precision_posterior), mean_prior + mean_views)
+        try:
+            posterior_returns = np.dot(np.linalg.inv(precision_posterior), mean_prior + mean_views)
+        except np.linalg.LinAlgError:
+            posterior_returns = np.dot(np.linalg.pinv(precision_posterior), mean_prior + mean_views)
         
         return posterior_returns
     
     def form_views(self, stocks_data: pd.DataFrame, cov_matrix: np.ndarray, view_type: str = 'both') -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Form investment views for Black-Litterman"""
+        """Form investment views for Black-Litterman with analyst confidence weighting"""
         n_assets = len(stocks_data)
         n_views = 2 if view_type != 'both' else 3
         
         P = np.zeros((n_views, n_assets))
         Q = np.zeros(n_views)
+        confidence_levels = np.zeros(n_views)
         
         # Calculate median values for classification
         median_return = stocks_data['Annual_Return_5Y'].median()
@@ -807,23 +855,40 @@ class PortfolioOptimizer:
                 P[view_index] = P[view_index] / P[view_index].sum()
             
             Q[view_index] = stocks_data.loc[high_return_indices, 'Annual_Return_5Y'].mean() + 0.02
+            confidence_levels[view_index] = 0.5  # Moderate confidence in historical patterns
             view_index += 1
         
-        # View 2: Undervalued stocks will outperform
+        # View 2: Undervalued stocks will outperform (with analyst confidence)
         if view_type in ['undervalue', 'both'] and 'Undervalue Rate' in stocks_data.columns:
             undervalued_indices = stocks_data[
                 (stocks_data['Undervalue Rate'].notnull()) & 
                 (stocks_data['Undervalue Rate'] > 0)
             ].index
             
+            # Calculate weighted view based on analyst coverage
+            analyst_counts = []
             for idx in undervalued_indices:
-                P[view_index, idx] = 1.0
+                # Get analyst count for this stock (from stored data or default)
+                symbol = stocks_data.loc[idx, 'Symbol']
+                # Note: In production, this would be fetched from the updated analyst data
+                # For now, we'll use a placeholder that can be updated
+                analyst_count = stocks_data.loc[idx, 'Analyst_Count'] if 'Analyst_Count' in stocks_data.columns else 10
+                analyst_counts.append(analyst_count)
+                
+                # Weight by analyst confidence: more analysts = higher weight
+                analyst_confidence = min(analyst_count / 30, 1.0)
+                P[view_index, idx] = analyst_confidence
             
             if P[view_index].sum() > 0:
                 P[view_index] = P[view_index] / P[view_index].sum()
                 Q[view_index] = stocks_data.loc[undervalued_indices, 'Undervalue Rate'].mean()
+                
+                # Overall confidence based on average analyst coverage
+                avg_analyst_count = np.mean(analyst_counts) if analyst_counts else 10
+                confidence_levels[view_index] = min(avg_analyst_count / 30, 1.0) * 0.8
             else:
                 Q[view_index] = 0.10
+                confidence_levels[view_index] = 0.3
             
             view_index += 1
         
@@ -837,12 +902,15 @@ class PortfolioOptimizer:
                 P[view_index] = P[view_index] / P[view_index].sum()
             
             Q[view_index] = 0.20  # 20% expected return for AI-driven stocks
+            confidence_levels[view_index] = 0.7  # High confidence in AI trend
         
-        # Create uncertainty matrix
+        # Create uncertainty matrix with confidence-based scaling
         Omega = np.zeros((n_views, n_views))
         for i in range(n_views):
             portfolio_var = np.dot(P[i], np.dot(cov_matrix, P[i].T))
-            Omega[i, i] = portfolio_var * 0.3
+            # Lower confidence = higher uncertainty (inverse relationship)
+            uncertainty_scaling = 1.0 / max(confidence_levels[i], 0.1)  # Avoid division by zero
+            Omega[i, i] = portfolio_var * 0.3 * uncertainty_scaling
         
         return P, Q, Omega
     

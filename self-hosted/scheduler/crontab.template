@@ -1,0 +1,5 @@
+# Crontab for portfolio optimization pipeline
+# This file is automatically configured from environment variables
+
+# Run the pipeline based on CRON_SCHEDULE
+${CRON_SCHEDULE} /app/pipeline_trigger.sh >> /var/log/cron/pipeline.log 2>&1
