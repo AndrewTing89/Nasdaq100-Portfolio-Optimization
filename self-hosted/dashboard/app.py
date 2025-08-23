@@ -1,6 +1,6 @@
 """
-Local Portfolio Optimization Dashboard
-A multi-page Streamlit dashboard for visualizing portfolio optimization results using local files
+Portfolio Optimization Dashboard
+A multi-page Streamlit dashboard for visualizing portfolio optimization results from database
 """
 
 import streamlit as st
@@ -22,6 +22,32 @@ import time
 import hashlib
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import pytz
+
+# Set up Pacific timezone
+PACIFIC_TZ = pytz.timezone('US/Pacific')
+
+def format_timestamp_pacific(timestamp):
+    """Convert timestamp to Pacific time and format with timezone indicator"""
+    if timestamp is None:
+        return 'Unknown'
+    
+    # If timestamp is a string, return as-is (for 'Unknown' case)
+    if isinstance(timestamp, str):
+        return timestamp
+    
+    # Convert to Pacific timezone
+    if timestamp.tzinfo is None:
+        # Assume UTC if no timezone info
+        timestamp = pytz.UTC.localize(timestamp)
+    
+    pacific_time = timestamp.astimezone(PACIFIC_TZ)
+    
+    # Determine if PST or PDT
+    is_dst = bool(pacific_time.dst())
+    tz_abbr = "PDT" if is_dst else "PST"
+    
+    return pacific_time.strftime(f'%Y-%m-%d %H:%M:%S {tz_abbr}')
 
 # Import technical analysis module
 try:
@@ -500,15 +526,28 @@ def get_system_health():
         health_status['memory_usage'] = {'status': 'Error', 'detail': 'Cannot read memory usage'}
     
     try:
-        # Check data directory
-        data_loader = st.session_state.data_loader
-        if data_loader.data_dir.exists():
-            file_count = len(data_loader.list_files("data"))
-            health_status['data_directory'] = {'status': 'Healthy', 'detail': f'{file_count} files available'}
+        # Check data directory - in containerized environment, always assume healthy if database is accessible
+        if os.path.exists("/.dockerenv"):
+            # We're in a container - check database connectivity instead
+            try:
+                data_loader = st.session_state.data_loader
+                with data_loader.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT COUNT(*) FROM stocks")
+                        stock_count = cur.fetchone()[0]
+                health_status['data_directory'] = {'status': 'Healthy', 'detail': f'Database connected ({stock_count} stocks)'}
+            except:
+                health_status['data_directory'] = {'status': 'Warning', 'detail': 'Database connection issue'}
         else:
-            health_status['data_directory'] = {'status': 'Error', 'detail': 'Data directory not found'}
+            # Local development - check actual data directory
+            data_loader = st.session_state.data_loader
+            if data_loader.data_dir.exists():
+                file_count = len(data_loader.list_files("data"))
+                health_status['data_directory'] = {'status': 'Healthy', 'detail': f'{file_count} files available'}
+            else:
+                health_status['data_directory'] = {'status': 'Error', 'detail': 'Data directory not found'}
     except Exception as e:
-        health_status['data_directory'] = {'status': 'Error', 'detail': 'Cannot access data directory'}
+        health_status['data_directory'] = {'status': 'Error', 'detail': 'Cannot access data'}
     
     try:
         # Check pipeline API service (data-pipeline container)
@@ -628,19 +667,27 @@ def get_time_ago(timestamp_str):
 
 
 def get_data_freshness():
-    """Get data freshness indicators from status endpoint"""
+    """Get data freshness indicators from database"""
     try:
-        api_host = "portfolio-data-pipeline:8080" if os.path.exists("/.dockerenv") else "localhost:8081"
-        response = requests.get(f"http://{api_host}/status", timeout=5)
-        if response.status_code == 200:
-            status_data = response.json()
-            execution_status = status_data.get("execution_status", {})
-            
-            return {
-                'last_optimization': execution_status.get('last_run'),
-                'stocks_analyzed': 0,  # Not available from current API
-                'pipeline_status': execution_status.get('last_status')
-            }
+        data_loader = st.session_state.data_loader
+        with data_loader.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Get latest completed pipeline run
+                cur.execute("""
+                    SELECT completed_at, stocks_processed, status
+                    FROM pipeline_runs
+                    WHERE status = 'completed'
+                    ORDER BY completed_at DESC
+                    LIMIT 1
+                """)
+                result = cur.fetchone()
+                
+                if result:
+                    return {
+                        'last_optimization': result[0].isoformat() if result[0] else None,
+                        'stocks_analyzed': result[1] or 0,
+                        'pipeline_status': result[2] or 'unknown'
+                    }
     except Exception as e:
         print(f"Failed to get data freshness: {e}")
         pass
@@ -648,93 +695,40 @@ def get_data_freshness():
 
 
 def trigger_full_pipeline():
-    """Trigger full pipeline with real-time status updates"""
+    """Trigger full database pipeline"""
     try:
-        # Use container name when running in Docker, localhost for development
-        api_host = "portfolio-data-pipeline:8080" if os.path.exists("/.dockerenv") else "localhost:8081"
+        st.info("🚀 Starting database portfolio optimization pipeline...")
         
-        # Start async execution
-        execute_endpoint = f"http://{api_host}/execute"
-        status_endpoint = f"http://{api_host}/status"
+        # Import and run the database-only pipeline directly
+        import sys
+        import os
         
-        payload = {
-            "command": "full",
-            "async": True,  # Start in background
-            "model_type": "all"
-        }
+        # Add the src directory to the Python path
+        src_path = '/app/../src' if os.path.exists("/.dockerenv") else './src'
+        if src_path not in sys.path:
+            sys.path.append(src_path)
         
-        # Start the pipeline
-        st.info("🚀 Starting full portfolio optimization pipeline...")
-        response = requests.post(execute_endpoint, json=payload, timeout=10)
-        
-        if response.status_code != 202:  # 202 = Accepted for async
-            st.error(f"❌ Failed to start pipeline: {response.text}")
-            return False
-            
-        st.success("✅ Pipeline started successfully!")
+        from db_only_pipeline import DatabaseOnlyPipeline
         
         # Create a progress container
         progress_container = st.empty()
         status_container = st.empty()
         
-        # Monitor progress
-        import time
-        max_wait_time = 1800  # 30 minutes
-        start_time = time.time()
-        last_status = None
+        # Run pipeline
+        pipeline = DatabaseOnlyPipeline()
+        progress_container.info("⏳ Executing pipeline...")
         
-        while time.time() - start_time < max_wait_time:
-            try:
-                # Check status
-                status_response = requests.get(status_endpoint, timeout=5)
-                if status_response.status_code == 200:
-                    status_data = status_response.json()
-                    execution_status = status_data.get("execution_status", {})
-                    
-                    is_running = execution_status.get("running", False)
-                    current_status = execution_status.get("last_status")
-                    duration = execution_status.get("last_duration")
-                    
-                    if is_running:
-                        # Still running - show progress
-                        progress_container.info("⏳ Pipeline is running... Please wait.")
-                        status_container.info(f"🔄 Status: Processing data (Running for {int(time.time() - start_time)} seconds)")
-                    else:
-                        # Completed
-                        if current_status == "success":
-                            progress_container.success("🎉 Pipeline completed successfully!")
-                            status_container.success(f"✅ Duration: {duration:.1f} seconds" if duration else "✅ Execution completed")
-                            
-                            # Show completion summary
-                            st.info("📊 **Pipeline Summary:**")
-                            st.info("• ✅ Phase 1: NASDAQ-100 analysis completed")  
-                            st.info("• ✅ Phase 2: Historical data collection completed")
-                            st.info("• ✅ Phase 3: Portfolio optimization completed")
-                            st.info("🔄 **Refresh the Executive Summary page to see updated results!**")
-                            return True
-                        elif current_status == "error":
-                            progress_container.error("❌ Pipeline failed")
-                            status_container.error("Check system logs for details")
-                            return False
-                        else:
-                            # Unknown status, keep waiting
-                            progress_container.info("⏳ Pipeline status unclear, continuing to monitor...")
-                            
-                # Wait before next check
-                time.sleep(3)
-                
-            except Exception as e:
-                status_container.warning(f"⚠️ Status check error: {e}")
-                time.sleep(5)
+        result = pipeline.run_complete_pipeline(max_stocks=100)
         
-        # Timeout
-        progress_container.warning("⏰ Pipeline monitoring timed out")
-        status_container.info("The pipeline may still be running in the background. Check the Executive Summary page later.")
-        return False
+        if result['status'] == 'success':
+            st.success(f"✅ Pipeline completed successfully!")
+            st.info(f"📊 Processed {result.get('stocks_processed', 0)} stocks")
+            st.info(f"🎯 Generated {result.get('portfolios_created', 0)} portfolio models")
+            return True
+        else:
+            st.error(f"❌ Pipeline failed: {result.get('error', 'Unknown error')}")
+            return False
                 
-    except requests.exceptions.ConnectionError:
-        st.error("❌ Cannot connect to pipeline API service.")
-        return False
     except Exception as e:
         st.error(f"❌ Unexpected error: {str(e)}")
         return False
@@ -922,7 +916,7 @@ def load_latest_data():
     with data_loader.get_connection() as conn:
         # Get latest pipeline run info
         run_query = """
-            SELECT id, phase1_summary, phase2_summary, stocks_processed
+            SELECT id, phase1_summary, phase2_summary, stocks_processed, completed_at
             FROM pipeline_runs
             WHERE status = 'completed'
             ORDER BY completed_at DESC
@@ -935,7 +929,8 @@ def load_latest_data():
                 # Create summary objects from database
                 phase1_summary = {
                     'total_stocks': result[3] if result[3] else 0,
-                    'stocks_processed': result[3] if result[3] else 0
+                    'stocks_processed': result[3] if result[3] else 0,
+                    'timestamp': format_timestamp_pacific(result[4]) if result[4] else 'Unknown'
                 }
                 phase2_summary = {
                     'total_stocks': result[3] if result[3] else 0,
@@ -1974,7 +1969,8 @@ def render_historical_tracking(data):
             # Recent executions table
             st.subheader("📋 Recent Pipeline Runs")
             recent_executions = execution_history.head(20).copy()
-            recent_executions['Date'] = recent_executions['Date'].dt.strftime('%Y-%m-%d %H:%M:%S')
+            # Convert timestamps to Pacific time
+            recent_executions['Date'] = recent_executions['Date'].apply(lambda x: format_timestamp_pacific(x))
             
             # Add status coloring
             def highlight_status(row):
@@ -2000,88 +1996,69 @@ def render_historical_tracking(data):
     
     # Model performance over time
     st.subheader("📊 Model Performance Trends")
-    st.caption("Historical model performance based on local results files over time.")
+    st.caption("Historical model performance based on database pipeline runs over time.")
     
-    # Look for comparison files
-    comparison_files = [f for f in results_files if 'comparison' in f.lower() or 'performance' in f.lower()]
+    # Get historical performance data from database
+    comparison_data = []
+    with data_loader.get_connection() as conn:
+        perf_query = """
+            SELECT pr.completed_at, pm.model_name, pp.total_return, pp.sharpe_ratio, pp.volatility
+            FROM pipeline_runs pr
+            JOIN portfolio_performance pp ON pr.id = pp.pipeline_run_id
+            JOIN portfolio_models pm ON pp.portfolio_model_id = pm.id
+            WHERE pr.status = 'completed'
+            ORDER BY pr.completed_at DESC
+            LIMIT 50
+        """
+        comparison_data = pd.read_sql(perf_query, conn)
     
-    if comparison_files:
-        historical_data = []
-        for file in sorted(comparison_files)[-10:]:  # Last 10 files
-            try:
-                file_timestamp = data_loader.get_file_timestamp(file)
-                if file_timestamp:
-                    df = data_loader.load_csv(file)
-                    if df is not None and 'Model' in df.columns:
-                        df['Date'] = file_timestamp
-                        historical_data.append(df)
-            except Exception:
-                continue
+    if not comparison_data.empty:
+        # Format data for visualization
+        comparison_data['Date'] = pd.to_datetime(comparison_data['completed_at'])
         
-        if historical_data:
-            # Combine all historical data
-            combined_df = pd.concat(historical_data, ignore_index=True)
-            
-            # Performance trend chart with consistent colors
-            if 'Return' in combined_df.columns:
-                # Use the same color mapping as Portfolio Optimization page
-                model_colors = {
-                    'mv_historical_max_sharpe': '#e74c3c',
-                    'mv_historical_min_vol': '#3498db',
-                    'mv_undervalue_max_sharpe': '#f39c12',
-                    'mv_undervalue_min_vol': '#27ae60',
-                    'rp_historical': '#9b59b6',
-                    'rp_undervalue': '#1abc9c'
-                }
-                
-                fig_trend = px.line(
-                    combined_df,
-                    x='Date',
-                    y='Return',
-                    color='Model',
-                    title="Model Return Trends Over Time",
-                    color_discrete_map=model_colors
-                )
-                fig_trend.update_layout(
-                    title_font=dict(size=18, color='#2c3e50'),
-                    xaxis_title_font=dict(size=14, color='#2c3e50'),
-                    yaxis_title_font=dict(size=14, color='#2c3e50'),
-                    legend_font=dict(size=11, color='#2c3e50'),
-                    plot_bgcolor='white',
-                    paper_bgcolor='white'
-                )
-                st.plotly_chart(fig_trend, use_container_width=True)
-            
-            # Show data table
-            st.subheader("📋 Historical Performance Data")
-            if 'Return' in combined_df.columns:
-                pivot_df = combined_df.pivot_table(
-                    index='Date', 
-                    columns='Model', 
-                    values='Return', 
-                    aggfunc='first'
-                ).round(4)
-                st.dataframe(pivot_df, use_container_width=True)
-        else:
-            st.info("No historical performance comparison files found.")
+        # Performance trend chart
+        fig_trend = px.line(
+            comparison_data,
+            x='Date',
+            y='total_return',
+            color='model_name',
+            title="Model Return Trends Over Time"
+        )
+        fig_trend.update_layout(
+            title_font=dict(size=18, color='#2c3e50'),
+            xaxis_title_font=dict(size=14, color='#2c3e50'),
+            yaxis_title_font=dict(size=14, color='#2c3e50'),
+            legend_font=dict(size=11, color='#2c3e50'),
+            plot_bgcolor='white',
+            paper_bgcolor='white'
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+        
+        # Show data table
+        st.subheader("📋 Historical Performance Data")
+        display_data = comparison_data[['Date', 'model_name', 'total_return', 'sharpe_ratio', 'volatility']].copy()
+        display_data['total_return'] = display_data['total_return'].round(4)
+        display_data['sharpe_ratio'] = display_data['sharpe_ratio'].round(4) 
+        display_data['volatility'] = display_data['volatility'].round(4)
+        st.dataframe(display_data, use_container_width=True)
     else:
-        st.info("No historical model performance data available yet. Performance comparison files will be created as you run the pipeline over time.")
+        st.info("No historical model performance data available yet. Data will appear as you run the pipeline over time.")
     
     # Data freshness
     st.subheader("📅 Data Freshness")
     
+    freshness = get_data_freshness()
     col1, col2 = st.columns(2)
     with col1:
         st.info("**Stock Data:** Updated when pipeline runs")
         st.info("**Portfolio Analysis:** Refreshed on manual execution")
     
     with col2:
-        # Get real data ages from local files
-        stock_data_age = get_data_age(data_loader, "data")
-        portfolio_age = get_data_age(data_loader, "results")
-        
-        st.metric("Stock Data Age", stock_data_age)
-        st.metric("Portfolio Results Age", portfolio_age)
+        if freshness.get('last_optimization'):
+            last_run = freshness['last_optimization']
+            st.success(f"**Last Pipeline Run:** {format_timestamp_pacific(pd.to_datetime(last_run))}")
+        else:
+            st.warning("**Last Pipeline Run:** No completed runs found")
 
 
 def render_system_status(data):
@@ -2498,7 +2475,9 @@ def render_system_status(data):
                 st.text_area("Recent Logs", value=log_text, height=400, disabled=True, key="log_viewer")
                 
                 # Show log statistics
-                st.caption(f"Showing last {len(logs)} lines • Last updated: {datetime.now().strftime('%H:%M:%S')}")
+                pacific_now = datetime.now(PACIFIC_TZ)
+                tz_abbr = "PDT" if bool(pacific_now.dst()) else "PST"
+                st.caption(f"Showing last {len(logs)} lines • Last updated: {pacific_now.strftime(f'%H:%M:%S {tz_abbr}')}")
             else:
                 st.info("No logs available yet")
                 
